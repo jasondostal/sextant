@@ -17,15 +17,16 @@ struct Uniforms {
     var scale: Float
 }
 
-/// Draws the sky in five passes: background, Milky Way, constellation
-/// figures, stars, bodies, then the ground over everything below the hills.
+/// Draws the sky in five passes: background (with the Milky Way), constellation
+/// figures, stars, bodies, then the ridge and lake over everything below the hills.
 final class Renderer: NSObject, MTKViewDelegate {
     let model: SkyModel
     private let device: MTLDevice
     private let queue: MTLCommandQueue
     private let sky, ground, stars, glows, lines: MTLRenderPipelineState
-    private let starBuffer, milkyWayBuffer, lineBuffer: MTLBuffer
-    private let starCount, milkyWayCount, lineVertexCount: Int
+    private let starBuffer, lineBuffer: MTLBuffer
+    private let starCount, lineVertexCount: Int
+    private let milkyWay: MTLTexture
 
     init(view: MTKView, model: SkyModel) {
         self.model = model
@@ -66,14 +67,10 @@ final class Renderer: NSObject, MTKViewDelegate {
         starCount = data.catalog.stars.count
         starBuffer = device.makeBuffer(bytes: packed, length: packed.count * 4)!
 
-        // Milky Way: ~1,700 soft 4.5° blobs, brighter toward the core levels
-        var mw: [Float] = []
-        for p in data.milkyWay {
-            let a = 0.010 + 0.011 * Float(p.level)
-            mw += [p.direction.x, p.direction.y, p.direction.z, 4.5, 0.62 * a, 0.70 * a, 0.95 * a, a]
-        }
-        milkyWayCount = data.milkyWay.count
-        milkyWayBuffer = device.makeBuffer(bytes: mw, length: mw.count * 4)!
+        // greyscale Milky Way glow (tools/gen-milkyway.py), sampled by the sky pass
+        milkyWay = try! MTKTextureLoader(device: device).newTexture(
+            URL: Bundle.main.url(forResource: "milkyway", withExtension: "png")!,
+            options: [.SRGB: false, .generateMipmaps: false])
 
         var seg: [Float] = []
         for line in data.lines {
@@ -124,15 +121,10 @@ final class Renderer: NSObject, MTKViewDelegate {
         enc.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
 
         enc.setRenderPipelineState(sky)
+        enc.setFragmentTexture(milkyWay, index: 0)
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
 
-        var catalog: UInt32 = 1
-        enc.setRenderPipelineState(glows)
-        enc.setVertexBuffer(milkyWayBuffer, offset: 0, index: 0)
         enc.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
-        enc.setVertexBytes(&catalog, length: 4, index: 2)
-        enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: milkyWayCount)
-
         enc.setRenderPipelineState(lines)
         enc.setVertexBuffer(lineBuffer, offset: 0, index: 0)
         enc.drawPrimitives(type: .line, vertexStart: 0, vertexCount: lineVertexCount)
@@ -142,7 +134,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4,
                            instanceCount: model.sky.catalog.count(brighterThan: limit))
 
-        catalog = 0
+        var catalog: UInt32 = 0
         enc.setRenderPipelineState(glows)
         enc.setVertexBytes(&bodyGlows, length: bodyGlows.count * 4, index: 0)
         enc.setVertexBytes(&catalog, length: 4, index: 2)

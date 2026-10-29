@@ -111,10 +111,10 @@ struct MetalSky: ViewRepresentable {
 
 /// Same hills as `terrainHeight` in Shaders.metal, so labels hide behind the land.
 func terrainHeight(azimuthRadians az: Double) -> Double {
-    var h = 1.2
-    h += 0.9 * sin(az * 2 + 0.7) + 0.6 * sin(az * 5 + 2.1) + 0.35 * sin(az * 11 + 0.4)
-    h += 0.18 * sin(az * 37 + 1.3) + 0.12 * sin(az * 71 + 4.0) + 0.08 * sin(az * 143)
-    return max(h, 0.4)
+    var h = 0.75
+    h += 0.45 * sin(az * 2 + 0.7) + 0.3 * sin(az * 5 + 2.1) + 0.2 * sin(az * 11 + 0.4)
+    h += 0.12 * sin(az * 37 + 1.3) + 0.08 * sin(az * 71 + 4.0) + 0.05 * sin(az * 143)
+    return max(h, 0.25)
 }
 
 struct SkyObject {
@@ -124,11 +124,17 @@ struct SkyObject {
     let magnitude: Double
     let horizontal: Horizontal       // apparent
     let screen: CGPoint
+    /// Set, or behind the ridge: still drawn, through the lake, dimmed.
+    let hidden: Bool
 }
 
-private let starName = Color(red: 0.96, green: 0.84, blue: 0.42)
-private let planetName = Color(red: 1.0, green: 0.93, blue: 0.84)
-private let constellationName = Color(red: 0.55, green: 0.70, blue: 0.95).opacity(0.75)
+// Star Walk 2's label colours, measured from Jason's screenshots.
+private let starName = Color(red: 0.80, green: 0.79, blue: 0.67)
+private let brightStarName = Color(red: 1.0, green: 1.0, blue: 0.80)
+private let planetName = Color(red: 0.75, green: 0.44, blue: 0.45)
+private let sunName = Color(red: 0.82, green: 0.82, blue: 0.32)
+private let moonName = Color(red: 0.85, green: 0.86, blue: 0.88)
+private let constellationName = Color(red: 0.72, green: 0.74, blue: 0.80)
 
 struct Labels: View {
     let model: SkyModel
@@ -145,32 +151,44 @@ struct Labels: View {
             let maxRank = cam.fov > 70 ? 1 : cam.fov > 35 ? 2 : 3
             for c in model.sky.constellations where c.rank <= maxRank {
                 let h = frame.eqjToHor * SIMD3<Double>(c.direction)
-                guard let p = proj.point(SIMD3<Float>(h)), aboveLand(Horizontal(vector: h)) else { continue }
-                gc.draw(Text(c.name.uppercased()).font(.system(size: 10, weight: .medium)).tracking(2.2)
-                    .foregroundStyle(constellationName), at: p)
+                guard let p = proj.point(SIMD3<Float>(h)) else { continue }
+                let dim = (c.rank == 1 ? 0.85 : 0.6) * (aboveLand(Horizontal(vector: h)) ? 1 : 0.35)
+                gc.draw(Text(c.name.uppercased()).font(.system(size: 15, weight: .regular)).tracking(0.6)
+                    .foregroundStyle(constellationName.opacity(dim)), at: p)
             }
 
             // star and planet names, brightest first, skipping any that would collide
             var taken: [CGRect] = []
             let nameLimit = min(5.0, 2.4 + 2.0 * log2(max(1, 75 / cam.fov)))
             for o in visible where o.kind != .star || o.magnitude <= nameLimit {
-                let color = o.kind == .star ? starName : planetName
-                let text = Text(o.name).font(.system(size: o.kind == .star ? 12 : 13, weight: .medium))
-                    .foregroundStyle(color)
+                let color = switch o.kind {
+                case .star: o.magnitude < 1 ? brightStarName : starName
+                case .planet: planetName
+                case .sun: sunName
+                case .moon: moonName
+                }
+                let text = Text(o.name).font(.system(size: 15, weight: .regular))
+                    .foregroundStyle(color.opacity(o.hidden ? 0.45 : 1))
                 let resolved = gc.resolve(text)
                 let s = resolved.measure(in: size)
-                let rect = CGRect(x: o.screen.x + 9, y: o.screen.y - s.height / 2 - 1, width: s.width, height: s.height)
+                // centred under the object, as Star Walk does
+                let below: CGFloat = o.kind == .sun || o.kind == .moon ? 22 : 10
+                let rect = CGRect(x: o.screen.x - s.width / 2, y: o.screen.y + below, width: s.width, height: s.height)
                 if taken.contains(where: { $0.intersects(rect.insetBy(dx: -3, dy: -1)) }) { continue }
                 taken.append(rect)
                 gc.draw(resolved, in: rect)
             }
 
-            // compass points, drawn on the land just under the hills
-            for (i, n) in ["N", "NE", "E", "SE", "S", "SW", "W", "NW"].enumerated() {
-                let h = Horizontal(altitude: -2.5, azimuth: Double(i) * 45)
+            // compass diamonds sitting on the horizon, Star Walk style
+            for (i, n) in ["N", "E", "S", "W"].enumerated() {
+                let h = Horizontal(altitude: -0.6, azimuth: Double(i) * 90)
                 guard let p = proj.point(SIMD3<Float>(h.vector)) else { continue }
-                gc.draw(Text(n).font(.system(size: i % 2 == 0 ? 15 : 11, weight: .semibold))
-                    .foregroundStyle(i == 0 ? Color(red: 1, green: 0.45, blue: 0.4) : .white.opacity(0.7)), at: p)
+                var d = Path()
+                d.move(to: CGPoint(x: p.x, y: p.y - 17)); d.addLine(to: CGPoint(x: p.x + 17, y: p.y))
+                d.addLine(to: CGPoint(x: p.x, y: p.y + 17)); d.addLine(to: CGPoint(x: p.x - 17, y: p.y)); d.closeSubpath()
+                gc.fill(d, with: .color(Color(red: 0.01, green: 0.02, blue: 0.15).opacity(0.6)))
+                gc.stroke(d, with: .color(.white.opacity(0.8)), lineWidth: 1.2)
+                gc.draw(Text(n).font(.system(size: 13, weight: .medium)).foregroundStyle(.white.opacity(0.9)), at: p)
             }
 
             // crosshair
@@ -191,23 +209,24 @@ struct Labels: View {
 
     private func dist(_ a: CGPoint, _ b: CGPoint) -> CGFloat { hypot(a.x - b.x, a.y - b.y) }
 
-    /// Named things in view and above the land, brightest first.
+    /// Named things in view, brightest first.
     private func visibleObjects(frame: SkyFrame, proj: Projector) -> [SkyObject] {
         var out: [SkyObject] = []
         for b in model.bodies(at: date) {
             let h = SIMD3<Float>(b.geometric.vector)
-            guard aboveLand(b.apparent), let p = proj.point(refractHorizon(h)) else { continue }
+            guard let p = proj.point(refractHorizon(h)) else { continue }
             let kind: SkyObject.Kind = b.body == .sun ? .sun : b.body == .moon ? .moon : .planet
             out.append(SkyObject(name: b.body.rawValue, kind: kind, magnitude: b.magnitude,
-                                 horizontal: b.apparent, screen: p))
+                                 horizontal: b.apparent, screen: p, hidden: !aboveLand(b.apparent)))
         }
         let cat = model.sky.catalog
         for (i, name) in cat.names {
             let s = cat.stars[i]
             let geo = frame.horizontal(star: SIMD3<Double>(s.direction))
             let app = Horizontal(vector: SIMD3<Double>(refractHorizon(SIMD3<Float>(geo.vector))))
-            guard aboveLand(app), let p = proj.point(SIMD3<Float>(app.vector)) else { continue }
-            out.append(SkyObject(name: name, kind: .star, magnitude: Double(s.magnitude), horizontal: app, screen: p))
+            guard let p = proj.point(SIMD3<Float>(app.vector)) else { continue }
+            out.append(SkyObject(name: name, kind: .star, magnitude: Double(s.magnitude), horizontal: app,
+                                 screen: p, hidden: !aboveLand(app)))
         }
         return out.sorted { $0.magnitude < $1.magnitude }
     }

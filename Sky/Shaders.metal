@@ -68,12 +68,19 @@ static float3 starTint(float bv) {
 
 // Height of the land in degrees along an azimuth (radians): low rolling hills
 // with a ragged treeline, so the horizon reads as ground, not a cut.
+// Low, like Star Walk's distant ridgeline. Mirrored in SkyView.swift.
 static float terrainHeight(float az) {
-    float h = 1.2;
-    h += 0.9 * sin(az * 2.0 + 0.7) + 0.6 * sin(az * 5.0 + 2.1) + 0.35 * sin(az * 11.0 + 0.4);
-    h += 0.18 * sin(az * 37.0 + 1.3) + 0.12 * sin(az * 71.0 + 4.0) + 0.08 * sin(az * 143.0);
-    return max(h, 0.4);
+    float h = 0.75;
+    h += 0.45 * sin(az * 2.0 + 0.7) + 0.3 * sin(az * 5.0 + 2.1) + 0.2 * sin(az * 11.0 + 0.4);
+    h += 0.12 * sin(az * 37.0 + 1.3) + 0.08 * sin(az * 71.0 + 4.0) + 0.05 * sin(az * 143.0);
+    return max(h, 0.25);
 }
+
+// J2000 equatorial → galactic (IAU), as columns.
+constant float3x3 eqjToGal = float3x3(
+    float3(-0.0548755604, 0.4941094279, -0.8676661490),
+    float3(-0.8734370902, -0.4448296300, -0.1980763734),
+    float3(-0.4838350155, 0.7469822445, 0.4559837762));
 
 static float3 rayAt(float2 ndc, constant Uniforms &u) {
     float4 p = u.invViewProj * float4(ndc, 1.0, 1.0);
@@ -95,15 +102,23 @@ vertex ScreenOut screenVertex(uint vid [[vertex_id]]) {
     return o;
 }
 
-fragment float4 skyFragment(ScreenOut in [[stage_in]], constant Uniforms &u [[buffer(0)]]) {
+fragment float4 skyFragment(ScreenOut in [[stage_in]], constant Uniforms &u [[buffer(0)]],
+                            texture2d<float> milkyWay [[texture(0)]]) {
     float3 d = rayAt(in.ndc, u);
     float alt = asin(clamp(d.z, -1.0, 1.0));
     float up = clamp(alt / 1.2, 0.0, 1.0);
 
-    // night: Star Walk navy, lighter toward the horizon
-    float3 zenith = float3(0.020, 0.045, 0.125);
-    float3 horizon = float3(0.075, 0.135, 0.270);
-    float3 night = mix(horizon, zenith, pow(up, 0.55));
+    // night: Star Walk's flat deep blue (0,0,55), a touch violet toward the zenith
+    float3 night = mix(float3(0.0, 0.0, 0.216), float3(0.022, 0.006, 0.275), pow(clamp(alt / 1.57, 0.0, 1.0), 1.5));
+
+    // Milky Way: ESO's panorama with the stars removed, in galactic coordinates,
+    // tinted Star Walk lavender. The catalog frame barely moves, so the inverse
+    // of eqjToHor (a rotation) is its transpose.
+    float3 g = eqjToGal * (transpose(u.eqjToHor) * d);
+    float2 uv = float2(0.5 - atan2(g.y, g.x) / (2.0 * M_PI_F), 0.5 - asin(clamp(g.z, -1.0, 1.0)) / M_PI_F);
+    constexpr sampler mwSampler(filter::linear, address::repeat);
+    float mw = milkyWay.sample(mwSampler, uv, level(0)).r;
+    night += float3(0.30, 0.27, 0.46) * mw * 0.5;
 
     // day and twilight
     float3 dayZenith = float3(0.16, 0.38, 0.78);
@@ -129,10 +144,16 @@ fragment float4 groundFragment(ScreenOut in [[stage_in]], constant Uniforms &u [
     float aa = 1.5 / u.pxPerDeg;                         // ~1.5 px of antialiasing
     float cover = 1.0 - smoothstep(edge - aa, edge + aa, alt);
     if (cover <= 0.0) discard_fragment();
-    float depth = clamp((edge - alt) / 25.0, 0.0, 1.0);
-    float3 night = mix(float3(0.035, 0.060, 0.075), float3(0.008, 0.014, 0.020), depth);
-    float3 day = mix(float3(0.20, 0.27, 0.18), float3(0.07, 0.10, 0.07), depth);
-    return float4(mix(day, night, u.darkness), cover);
+    // the ridge is solid; below the true horizon is Star Walk's dark lake,
+    // translucent so whatever has set still shows through, dimmed
+    float lake = smoothstep(-aa, aa, -alt);
+    float3 ridge = mix(float3(0.20, 0.27, 0.18), float3(0.031, 0.043, 0.125), u.darkness);
+    float3 water = mix(float3(0.10, 0.16, 0.22), float3(0.012, 0.03, 0.19), u.darkness);
+    float3 c = mix(ridge, water, lake);
+    float a = mix(1.0, 0.55, lake);
+    // a faint lit rim along the top of the ridge
+    c += float3(0.05, 0.06, 0.12) * (1.0 - smoothstep(0.0, 4.0 * aa, edge - alt)) * (1.0 - lake);
+    return float4(c, cover * a);
 }
 
 // --- stars ------------------------------------------------------------------
@@ -150,7 +171,8 @@ vertex SpriteOut starVertex(uint vid [[vertex_id]], uint iid [[instance_id]],
 
     // size and brightness both grow with how far above the limit a star is;
     // the brightest few get a wide halo that's what makes them read as glowing
-    float radius = clamp(1.3 + 0.75 * rel + 0.13 * rel * rel, 1.3, 22.0) * u.scale;
+    float radius = clamp(1.3 + 0.75 * rel + 0.13 * rel * rel, 1.3, 22.0);
+    radius = (radius + smoothstep(3.0, 6.0, rel) * radius * 0.8) * u.scale;   // room for the sparkle
     float alpha = clamp(0.2 + rel / 2.5, 0.2, 1.0) * u.darkness;
     float2 c = corner(vid);
     clip.xy += c * radius * 2.0 / u.viewport * clip.w;
@@ -164,10 +186,14 @@ vertex SpriteOut starVertex(uint vid [[vertex_id]], uint iid [[instance_id]],
 fragment float4 starFragment(SpriteOut in [[stage_in]]) {
     float r2 = dot(in.uv, in.uv);
     if (r2 > 1.0) discard_fragment();
-    // faint stars fill their little quad; bright ones are a hot core in a wide halo
-    float core = exp(-r2 * mix(2.5, 22.0, in.sharpness));
-    float halo = exp(-r2 * 4.0) * 0.4 * in.sharpness;
-    return in.color * (core * 1.4 + halo);
+    // faint stars fill their little quad; bright ones are a hot core in a wide
+    // halo with Star Walk's four-point sparkle
+    float core = exp(-r2 * mix(2.5, 40.0, in.sharpness));
+    float halo = exp(-r2 * 5.0) * 0.3 * in.sharpness;
+    float2 a = abs(in.uv);
+    float spikes = (exp(-a.y * 60.0) * (1.0 - a.x) + exp(-a.x * 60.0) * (1.0 - a.y));
+    spikes *= smoothstep(0.45, 0.9, in.sharpness) * 0.8;
+    return in.color * (core * 1.4 + halo + spikes);
 }
 
 // --- glows: Milky Way blobs and solar-system bodies --------------------------
@@ -213,7 +239,7 @@ vertex LineOut lineVertex(uint vid [[vertex_id]],
     LineOut o;
     // left unclipped on purpose: the near plane trims segments that run behind the camera
     o.position = u.viewProj * float4(refractHorizon(u.eqjToHor * float3(dirs[vid])), 1);
-    o.color = float4(0.36, 0.56, 0.86, 1.0) * 0.42 * u.darkness;
+    o.color = float4(0.55, 0.62, 0.85, 1.0) * 0.28 * u.darkness;
     return o;
 }
 
