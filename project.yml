@@ -26,6 +26,7 @@ targets:
         UIRequiresFullScreen: true
         UIStatusBarHidden: true
         UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeRight
           - UIInterfaceOrientationLandscapeLeft
         ITSAppUsesNonExemptEncryption: false

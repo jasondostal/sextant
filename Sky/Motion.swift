@@ -37,13 +37,18 @@ final class MotionTracker {
     func stop() {}
     #endif
 
-    /// Screen right/up in sky coordinates for the current landscape orientation.
+    /// Screen right/up in sky coordinates for the current interface orientation.
     private static func screenBasis(x: SIMD3<Float>, y: SIMD3<Float>, z: SIMD3<Float>) -> Camera.Basis {
         #if os(iOS)
         let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
-        // landscapeRight: the phone's top points left, so its +x side is up
-        if scene?.effectiveGeometry.interfaceOrientation == .landscapeRight {
+        switch scene?.effectiveGeometry.interfaceOrientation {
+        case .portrait?:
+            return Camera.Basis(right: x, up: y, forward: -z)
+        case .landscapeRight?:
+            // the phone's top points left, so its +x side is up
             return Camera.Basis(right: -y, up: x, forward: -z)
+        default:
+            break
         }
         #endif
         return Camera.Basis(right: y, up: -x, forward: -z)
