@@ -22,7 +22,8 @@
 - [x] Visible Tonight: tap a pass row to jump to that pass. [ ] Deep-sky tiles.
 - [x] Detail card (tap the pill): satellites get "fades into Earth's shadow in 4:20" / "sets in 6:08" (checked vs Skyfield to 1 s) and the next day's visible passes (tap to jump); everything else gets position, magnitude, phase, distance, RA/Dec, tonight's chart and rise/highest/set with azimuths.
 - [x] Night mode (eye button): Metal's last pass reads the tile back and redraws it red on a steep curve; SwiftUI layers grayscale x red. Remembered.
-- [ ] Constellation lines only for the target's constellation; ground fades when flying below the horizon; ecliptic.
+- [x] Constellation lines: Auto (the figure you're looking at / around the selection fades in, Star Walk's way), Always, Never; gear → Settings.
+- [ ] Ground fades when flying below the horizon; ecliptic.
 - [ ] Default FOV: Star Walk's point mode is ~88° wide, ours 75° (check if Jason had zoomed).
 
 ## Satellites

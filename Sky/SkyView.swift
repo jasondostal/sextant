@@ -13,6 +13,7 @@ struct SkyView: View {
     @State private var tonight = UserDefaults.standard.bool(forKey: "tonight")
     // `-card YES` opens the selected object's card (screenshots)
     @State private var card = UserDefaults.standard.bool(forKey: "card")
+    @State private var settings = UserDefaults.standard.bool(forKey: "settings")
 
     var body: some View {
         ZStack {
@@ -22,6 +23,9 @@ struct SkyView: View {
             }
             if tonight {
                 TonightPanel(model: model, open: $tonight).nightVision(model.nightMode)
+            }
+            if settings {
+                SettingsPanel(model: model, open: $settings).nightVision(model.nightMode)
             }
             if card, let t = model.target {
                 VStack {
@@ -58,7 +62,10 @@ struct SkyView: View {
                     .nightVision(model.nightMode)
                 }
                 VStack {
-                    Readout(model: model)
+                    HStack(alignment: .top) {
+                        Readout(model: model)
+                        SettingsButton(open: $settings)
+                    }
                     if model.timeBarOpen { TimeBar(model: model).padding(.top, 6) }
                     Spacer()
                     HStack {

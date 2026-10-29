@@ -74,18 +74,20 @@ def stars():
 def constellations():
     lines = json.load(open(os.path.join(CACHE, 'd3c', 'constellations.lines.json')))
     names = json.load(open(os.path.join(CACHE, 'd3c', 'constellations.json')))
-    out_lines = []
+    index = {f['id']: i for i, f in enumerate(names['features'])}
+    out_lines, owners = [], []
     for f in lines['features']:
         for seg in f['geometry']['coordinates']:
             flat = []
             for lon, lat in seg:
                 flat += [round(lon % 360, 3), round(lat, 3)]
             out_lines.append(flat)
+            owners.append(index[f['id'][:3]])      # Serpens' two halves are Ser1 / Ser2
     out_names = []
     for f in names['features']:
         lon, lat = f['geometry']['coordinates']
         out_names.append([f['properties']['name'], round(lon % 360, 2), round(lat, 2), int(f['properties']['rank'])])
-    return out_lines, out_names
+    return out_lines, owners, out_names
 
 
 # galactic north pole, J2000
@@ -129,12 +131,13 @@ def main():
     with open(os.path.join(OUT, 'stars.bin'), 'wb') as f:
         f.write(buf)
     if os.path.isdir(os.path.join(CACHE, 'd3c')):
-        lines, cnames = constellations()
+        lines, owners, cnames = constellations()
         mw = milky_way()
     else:
         old = json.load(open(os.path.join(OUT, 'sky-data.json')))
-        lines, cnames, mw = old['lines'], old['constellations'], old['milkyWay']
-    data = {'stars': count, 'epoch': EPOCH, 'starNames': names, 'lines': lines, 'constellations': cnames, 'milkyWay': mw}
+        lines, owners, cnames, mw = old['lines'], old['lineOwners'], old['constellations'], old['milkyWay']
+    data = {'stars': count, 'epoch': EPOCH, 'starNames': names, 'lines': lines, 'lineOwners': owners,
+            'constellations': cnames, 'milkyWay': mw}
     with open(os.path.join(OUT, 'sky-data.json'), 'w') as f:
         json.dump(data, f, separators=(',', ':'), ensure_ascii=False)
     print(f'{count} stars ({len(buf)} bytes), {len(names)} named, {len(lines)} line segments, '

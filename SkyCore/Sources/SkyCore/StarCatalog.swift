@@ -69,6 +69,8 @@ public struct SkyData: Sendable {
     public let catalog: StarCatalog
     /// Constellation stick figures as polylines of J2000 directions.
     public let lines: [[SIMD3<Float>]]
+    /// Index into `constellations` of each polyline's constellation.
+    public let lineOwners: [Int]
     public let constellations: [Constellation]
     public let milkyWay: [MilkyWayPoint]
 
@@ -98,6 +100,7 @@ public struct SkyData: Sendable {
             MilkyWayPoint(direction: dir($0[0].doubleValue, $0[1].doubleValue), level: $0[2].intValue)
         }
         return SkyData(catalog: StarCatalog(packed: packed, names: names),
-                       lines: lines, constellations: cons, milkyWay: mw)
+                       lines: lines, lineOwners: (json["lineOwners"] as! [NSNumber]).map(\.intValue),
+                       constellations: cons, milkyWay: mw)
     }
 }

@@ -251,11 +251,12 @@ struct LineOut {
 
 vertex LineOut lineVertex(uint vid [[vertex_id]],
                           const device packed_float3 *dirs [[buffer(0)]],
-                          constant Uniforms &u [[buffer(1)]]) {
+                          constant Uniforms &u [[buffer(1)]],
+                          constant float &brightness [[buffer(2)]]) {
     LineOut o;
     // left unclipped on purpose: the near plane trims segments that run behind the camera
     o.position = u.viewProj * float4(refractHorizon(u.eqjToHor * float3(dirs[vid])), 1);
-    o.color = float4(0.55, 0.62, 0.85, 1.0) * 0.28 * u.darkness;
+    o.color = float4(0.55, 0.62, 0.85, 1.0) * brightness;
     return o;
 }
 

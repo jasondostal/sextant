@@ -26,7 +26,13 @@ final class Renderer: NSObject, MTKViewDelegate {
     private let queue: MTLCommandQueue
     private let sky, ground, stars, glows, lines, night: MTLRenderPipelineState
     private let starBuffer, lineBuffer: MTLBuffer
-    private let starCount, lineVertexCount: Int
+    private let starCount: Int
+    /// Each constellation's figure: where its vertices sit in `lineBuffer`, and its segments (J2000).
+    private let figures: [(range: Range<Int>, segments: [(SIMD3<Float>, SIMD3<Float>)])]
+    /// How lit each figure is right now, easing toward 1 for the focused one and 0 for the rest.
+    private var fade: [Float]
+    private var focused: Int?
+    private var lastFrame = Date()
     private let milkyWay: MTLTexture
     /// Per-frame satellite glows; three so the CPU never writes one the GPU is reading.
     private let satBuffers: [MTLBuffer]
@@ -79,13 +85,22 @@ final class Renderer: NSObject, MTKViewDelegate {
             URL: Bundle.main.url(forResource: "milkyway", withExtension: "png")!,
             options: [.SRGB: false, .generateMipmaps: false])
 
+        // vertex pairs grouped by constellation, so one figure can be drawn on its own
         var seg: [Float] = []
-        for line in data.lines {
-            for (a, b) in zip(line, line.dropFirst()) {
-                seg += [a.x, a.y, a.z, b.x, b.y, b.z]
+        var figs: [(range: Range<Int>, segments: [(SIMD3<Float>, SIMD3<Float>)])] = []
+        for c in data.constellations.indices {
+            let first = seg.count / 3
+            var segments: [(SIMD3<Float>, SIMD3<Float>)] = []
+            for (line, owner) in zip(data.lines, data.lineOwners) where owner == c {
+                for (a, b) in zip(line, line.dropFirst()) {
+                    seg += [a.x, a.y, a.z, b.x, b.y, b.z]
+                    segments.append((a, b))
+                }
             }
+            figs.append((first..<(seg.count / 3), segments))
         }
-        lineVertexCount = seg.count / 3
+        figures = figs
+        fade = Array(repeating: 0, count: figs.count)
         lineBuffer = device.makeBuffer(bytes: seg, length: seg.count * 4)!
         satBuffers = (0..<3).map { _ in device.makeBuffer(length: Self.maxSatellites * 48, options: .storageModeShared)! }
         super.init()
@@ -139,7 +154,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         enc.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
         enc.setRenderPipelineState(lines)
         enc.setVertexBuffer(lineBuffer, offset: 0, index: 0)
-        enc.drawPrimitives(type: .line, vertexStart: 0, vertexCount: lineVertexCount)
+        drawFigures(enc, date: date, darkness: u.darkness)
 
         enc.setRenderPipelineState(stars)
         enc.setVertexBuffer(starBuffer, offset: 0, index: 0)
@@ -167,6 +182,55 @@ final class Renderer: NSObject, MTKViewDelegate {
         cmd.present(drawable)
         cmd.addCompletedHandler { [inFlight] _ in inFlight.signal() }
         cmd.commit()
+    }
+
+    /// Auto: the figure you're looking at (or the selected object sits in) fades in
+    /// bright and the rest fade out. Always: all dim, that one bright. Never: none.
+    private func drawFigures(_ enc: MTLRenderCommandEncoder, date: Date, darkness: Float) {
+        let now = Date()
+        let dt = Float(min(0.1, now.timeIntervalSince(lastFrame)))
+        lastFrame = now
+        let mode = model.lineMode
+        if mode == .never { return }
+
+        // the point of interest, back in J2000 (refraction doesn't matter at this scale)
+        let toEqj = simd_transpose(model.frame(at: date).eqjToHor)
+        var look = SIMD3<Float>(toEqj * SIMD3<Double>(model.camera.basis.forward))
+        if let t = model.target, let r = model.resolve(t, at: date) {
+            look = SIMD3<Float>(toEqj * r.horizontal.vector)
+        }
+        focused = nearestFigure(to: look, current: focused)
+
+        for i in fade.indices {
+            let goal: Float = i == focused ? 1 : 0
+            fade[i] += (goal - fade[i]) * min(1, dt * 6)          // ~0.4 s ease
+        }
+        // dim figures fade with the sky; the focused one stays visible in daylight, like Star Walk's
+        let dim = 0.28 * darkness, bright = 0.85 * max(darkness, 0.5)
+        for (i, f) in figures.enumerated() where !f.range.isEmpty {
+            var b = mode == .always ? dim + (bright - dim) * fade[i] : bright * fade[i]
+            guard b > 0.01 else { continue }
+            enc.setVertexBytes(&b, length: 4, index: 2)
+            enc.drawPrimitives(type: .line, vertexStart: f.range.lowerBound, vertexCount: f.range.count)
+        }
+    }
+
+    /// The figure whose nearest segment is closest to `p`, within 12°; a new one
+    /// must beat the current by 1° so the lines don't flicker between neighbours.
+    private func nearestFigure(to p: SIMD3<Float>, current: Int?) -> Int? {
+        func distance(_ i: Int) -> Float {
+            figures[i].segments.map { a, b -> Float in
+                let n = simd_normalize(simd_cross(a, b))
+                let q = simd_normalize(p - simd_dot(p, n) * n)            // p projected onto the arc's great circle
+                let onArc = simd_dot(simd_cross(a, q), n) >= 0 && simd_dot(simd_cross(q, b), n) >= 0
+                return onArc ? asin(min(1, abs(simd_dot(p, n))))
+                             : min(acos(min(1, simd_dot(p, a))), acos(min(1, simd_dot(p, b))))
+            }.min() ?? .infinity
+        }
+        let d = figures.indices.map(distance)
+        guard let b = d.indices.min(by: { d[$0] < d[$1] }) else { return nil }
+        if let c = current, c != b, d[c] < d[b] + Float.pi / 180 { return c }
+        return d[b] < 12 * Float.pi / 180 ? b : nil
     }
 
     /// Bodies are already topocentric and in the horizon frame, so they're

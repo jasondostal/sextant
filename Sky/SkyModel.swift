@@ -17,6 +17,11 @@ final class SkyModel {
     var timeOffset: TimeInterval = 0
     var timeBarOpen = UserDefaults.standard.bool(forKey: "timebar")
     var timeUnit: TimeUnit = .hour
+    /// Constellation figures: just the one you're looking at (Star Walk's way), all, or none.
+    enum LineMode: String, CaseIterable { case auto = "Auto", always = "Always", never = "Never" }
+    var lineMode = LineMode(rawValue: UserDefaults.standard.string(forKey: "lineMode") ?? "") ?? .auto {
+        didSet { UserDefaults.standard.set(lineMode.rawValue, forKey: "lineMode") }
+    }
     /// Everything in dim red, to keep eyes dark-adapted; remembered.
     var nightMode = UserDefaults.standard.bool(forKey: "nightMode") {
         didSet { UserDefaults.standard.set(nightMode, forKey: "nightMode") }
