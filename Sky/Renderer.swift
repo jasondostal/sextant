@@ -18,12 +18,13 @@ struct Uniforms {
 }
 
 /// Draws the sky in five passes: background (with the Milky Way), constellation
-/// figures, stars, bodies, then the ridge and lake over everything below the hills.
+/// figures, stars, bodies, then the ridge and lake over everything below the hills;
+/// in night mode a sixth turns it all red.
 final class Renderer: NSObject, MTKViewDelegate {
     let model: SkyModel
     private let device: MTLDevice
     private let queue: MTLCommandQueue
-    private let sky, ground, stars, glows, lines: MTLRenderPipelineState
+    private let sky, ground, stars, glows, lines, night: MTLRenderPipelineState
     private let starBuffer, lineBuffer: MTLBuffer
     private let starCount, lineVertexCount: Int
     private let milkyWay: MTLTexture
@@ -62,6 +63,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         stars = pipeline("starVertex", "starFragment", blend: .additive)
         glows = pipeline("glowVertex", "glowFragment", blend: .additive)
         lines = pipeline("lineVertex", "lineFragment", blend: .additive)
+        night = pipeline("screenVertex", "nightFragment", blend: .none)
 
         let data = model.sky
         var packed: [Float] = []
@@ -157,6 +159,10 @@ final class Renderer: NSObject, MTKViewDelegate {
 
         enc.setRenderPipelineState(ground)
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        if model.nightMode {
+            enc.setRenderPipelineState(night)
+            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        }
         enc.endEncoding()
         cmd.present(drawable)
         cmd.addCompletedHandler { [inFlight] _ in inFlight.signal() }

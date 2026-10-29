@@ -260,3 +260,14 @@ vertex LineOut lineVertex(uint vid [[vertex_id]],
 }
 
 fragment float4 lineFragment(LineOut in [[stage_in]]) { return in.color; }
+
+// --- night mode ---------------------------------------------------------------
+
+// Last pass: everything drawn so far, read back from the tile (Apple GPUs'
+// framebuffer fetch) and redrawn as red at its own brightness, so the screen
+// doesn't spoil eyes adapted to the dark.
+fragment float4 nightFragment(ScreenOut in [[stage_in]], float4 dst [[color(0)]]) {
+    // steeper than linear: the sky's glow sinks toward black, stars and the Moon stay
+    float l = 0.9 * pow(dot(dst.rgb, float3(0.30, 0.59, 0.11)), 1.4);
+    return float4(l, l * 0.05, 0, 1);
+}

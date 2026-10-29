@@ -17,6 +17,10 @@ final class SkyModel {
     var timeOffset: TimeInterval = 0
     var timeBarOpen = UserDefaults.standard.bool(forKey: "timebar")
     var timeUnit: TimeUnit = .hour
+    /// Everything in dim red, to keep eyes dark-adapted; remembered.
+    var nightMode = UserDefaults.standard.bool(forKey: "nightMode") {
+        didSet { UserDefaults.standard.set(nightMode, forKey: "nightMode") }
+    }
 
     @ObservationIgnored private var bodyCache: (Date, Observer, [BodyPosition])?
     @ObservationIgnored private let locator = Locator()

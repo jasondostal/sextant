@@ -18,16 +18,17 @@ struct SkyView: View {
         ZStack {
             sky
             if searching {
-                SearchPanel(model: model, open: $searching)
+                SearchPanel(model: model, open: $searching).nightVision(model.nightMode)
             }
             if tonight {
-                TonightPanel(model: model, open: $tonight)
+                TonightPanel(model: model, open: $tonight).nightVision(model.nightMode)
             }
             if card, let t = model.target {
                 VStack {
                     Spacer()
                     DetailCard(model: model, target: t, open: $card)
                         .frame(maxHeight: 460)
+                        .nightVision(model.nightMode)
                 }
                 .padding(.horizontal, 12).padding(.bottom, 10)
                 #if os(macOS)
@@ -47,12 +48,14 @@ struct SkyView: View {
                     Labels(model: model, date: model.date(at: timeline.date), frameTime: timeline.date)
                 }
                 .allowsHitTesting(false)
+                .nightVision(model.nightMode)
                 if model.timeBarOpen {
                     HStack {
                         Spacer()
                         TimeRuler(model: model).frame(height: geo.size.height * 0.5)
                     }
                     .padding(.trailing, 4)
+                    .nightVision(model.nightMode)
                 }
                 VStack {
                     Readout(model: model)
@@ -61,6 +64,7 @@ struct SkyView: View {
                     HStack {
                         SearchButton(open: $searching)
                         TonightButton(open: $tonight)
+                        NightButton(model: model)
                         if model.target != nil {
                             Button { model.clearTarget() } label: {
                                 Label("Clear", systemImage: "scope").font(.system(size: 13, weight: .semibold))
@@ -89,6 +93,7 @@ struct SkyView: View {
                 .padding(.top, 12)
                 #endif
                 .padding(.bottom, 18)
+                .nightVision(model.nightMode)
             }
             .contentShape(Rectangle())
             .gesture(
@@ -121,6 +126,31 @@ struct SkyView: View {
             )
         }
         .ignoresSafeArea()
+    }
+}
+
+extension View {
+    /// Night mode for SwiftUI layers: brightness kept, colour turned to red.
+    /// (The Metal sky does the same in its last pass.)
+    func nightVision(_ on: Bool) -> some View {
+        grayscale(on ? 1 : 0).colorMultiply(on ? Color(red: 1, green: 0.1, blue: 0.05) : .white)
+    }
+}
+
+/// Red night mode on and off.
+struct NightButton: View {
+    let model: SkyModel
+
+    var body: some View {
+        Button { model.nightMode.toggle() } label: {
+            Image(systemName: model.nightMode ? "eye.fill" : "eye")
+                .font(.system(size: 17, weight: .semibold))
+                .frame(width: 44, height: 44)
+                .background(Circle().fill(Color(red: 0.05, green: 0.09, blue: 0.20).opacity(0.82)))
+                .overlay(Circle().stroke(.white.opacity(0.18)))
+                .foregroundStyle(.white)
+        }
+        .buttonStyle(.plain)
     }
 }
 
