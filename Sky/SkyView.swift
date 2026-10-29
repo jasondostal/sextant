@@ -309,6 +309,7 @@ struct Labels: View {
             #endif
             if model.timeBarOpen { topBand += 48 }
 
+            if model.showEcliptic { drawEcliptic(gc, frame: frame, proj: proj) }
             if case .satellite(let id)? = model.target { drawTrack(gc, satellite: id, proj: proj, size: size) }
             drawTrails(gc, satellites: visible.filter { $0.kind == .satellite }, proj: proj)
 
@@ -344,8 +345,9 @@ struct Labels: View {
                               with: .color(deepSkyName.opacity(o.hidden ? 0.25 : 0.55)),
                               style: StrokeStyle(lineWidth: 1, dash: [2.5, 2.5]))
                 }
+                let hidden = o.hidden && model.groundAlpha > 0.5
                 let text = Text(o.name).font(.system(size: 15, weight: .regular))
-                    .foregroundStyle(color.opacity(o.hidden ? 0.45 : 1))
+                    .foregroundStyle(color.opacity(hidden ? 0.45 : 1))
                 let resolved = gc.resolve(text)
                 let s = resolved.measure(in: size)
                 // centred under the object, as Star Walk does
@@ -428,6 +430,22 @@ struct Labels: View {
             }
         }
         gc.stroke(path, with: .color(color.opacity(0.45)), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+    }
+
+    /// The Sun's path through the zodiac (and roughly the planets'): Star Walk's amber dashes.
+    private func drawEcliptic(_ gc: GraphicsContext, frame: SkyFrame, proj: Projector) {
+        let e = 23.4393 * Double.pi / 180              // obliquity, J2000
+        var path = Path(), last: CGPoint?
+        for k in 0...180 {
+            let l = Double(k) * 2 * .pi / 180
+            let eqj = SIMD3<Double>(cos(l), sin(l) * cos(e), sin(l) * sin(e))
+            guard let p = proj.point(refractHorizon(SIMD3<Float>(frame.eqjToHor * eqj))) else { last = nil; continue }
+            // a jump across the screen means the line went behind the camera
+            if let q = last, hypot(p.x - q.x, p.y - q.y) < 400 { path.addLine(to: p) } else { path.move(to: p) }
+            last = p
+        }
+        gc.stroke(path, with: .color(Color(red: 0.85, green: 0.62, blue: 0.32).opacity(0.5)),
+                  style: StrokeStyle(lineWidth: 1.5, dash: [9, 7]))
     }
 
     /// A short fading tail behind each satellite: where it was over the last

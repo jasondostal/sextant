@@ -22,6 +22,12 @@ final class SkyModel {
     var lineMode = LineMode(rawValue: UserDefaults.standard.string(forKey: "lineMode") ?? "") ?? .auto {
         didSet { UserDefaults.standard.set(lineMode.rawValue, forKey: "lineMode") }
     }
+    var showEcliptic = UserDefaults.standard.object(forKey: "ecliptic") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(showEcliptic, forKey: "ecliptic") }
+    }
+    /// How solid the land is: eased toward almost nothing while you look down
+    /// at a target below the horizon, so you can see it through the Earth.
+    @ObservationIgnored var groundAlpha: Float = 1
     /// Everything in dim red, to keep eyes dark-adapted; remembered.
     var nightMode = UserDefaults.standard.bool(forKey: "nightMode") {
         didSet { UserDefaults.standard.set(nightMode, forKey: "nightMode") }

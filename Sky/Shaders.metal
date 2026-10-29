@@ -138,7 +138,8 @@ fragment float4 skyFragment(ScreenOut in [[stage_in]], constant Uniforms &u [[bu
     return float4(c, 1);
 }
 
-fragment float4 groundFragment(ScreenOut in [[stage_in]], constant Uniforms &u [[buffer(0)]]) {
+fragment float4 groundFragment(ScreenOut in [[stage_in]], constant Uniforms &u [[buffer(0)]],
+                               constant float &fade [[buffer(1)]]) {
     float3 d = rayAt(in.ndc, u);
     float alt = degrees(asin(clamp(d.z, -1.0, 1.0)));
     float az = atan2(-d.y, d.x);
@@ -155,7 +156,7 @@ fragment float4 groundFragment(ScreenOut in [[stage_in]], constant Uniforms &u [
     float a = mix(1.0, 0.55, lake);
     // a faint lit rim along the top of the ridge
     c += float3(0.05, 0.06, 0.12) * (1.0 - smoothstep(0.0, 4.0 * aa, edge - alt)) * (1.0 - lake);
-    return float4(c, cover * a);
+    return float4(c, cover * a * fade);      // fade < 1 while looking through the Earth at a target
 }
 
 // --- stars ------------------------------------------------------------------

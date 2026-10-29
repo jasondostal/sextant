@@ -155,7 +155,7 @@ struct DetailCard: View {
             if let rep = tonight, let it = rep.items.first {
                 Text(it.verdict).font(.system(size: 13)).foregroundStyle(.white.opacity(0.8))
                     .fixedSize(horizontal: false, vertical: true)
-                TonightChart(report: rep, item: it, now: now).frame(height: 130)
+                TonightChart(report: rep, item: it, now: now).frame(height: 142)
                 let ev = (it.events.rises.map { ("Rises", $0) } + it.events.peaks.map { ("Highest", $0) } +
                           it.events.sets.map { ("Sets", $0) }).sorted { $0.1.date < $1.1.date }
                 rows(ev.map { ($0.0, "\(clock($0.1.date)) · " + ($0.0 == "Highest"

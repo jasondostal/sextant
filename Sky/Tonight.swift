@@ -6,7 +6,7 @@ import SwiftUI
 /// looking at between dusk and dawn, an altitude chart for the one you pick, and
 /// for satellites the passes you can actually see rather than orbit wiggles.
 struct TonightItem: Identifiable {
-    enum Kind { case moon, planet, satellite, constellation, star }
+    enum Kind { case moon, planet, satellite, constellation, star, deepSky }
     let id: Target
     let name: String
     let kind: Kind
@@ -166,6 +166,24 @@ struct TonightReport {
             if let it = night.item(.star(i), cat.names[i]!, .star, curve: curve, events: ev) { starItems.append(it) }
         }
         items += starItems
+
+        // clusters, nebulae and galaxies that get well up: the binocular list
+        if !dark.isEmpty {
+            let mid = dark[dark.count / 2]
+            let dsos = DeepSkyObject.all.enumerated()
+                .filter { $0.element.magnitude <= 6 }
+                .map { e in (e.offset, e.element, frames.map { $0.horizontal(star: e.element.direction).altitude }) }
+                .filter { _, _, c in dark.contains { c[$0] > 25 } }
+                .sorted { $0.2[mid] > $1.2[mid] }
+                .prefix(6)
+            for (i, d, curve) in dsos {
+                let ev = SkyFrame.events(ofStar: d.direction, observer: observer, from: start, to: end)
+                if let it = night.item(.deepSky(i), d.name, .deepSky, curve: curve, events: ev,
+                                       prefix: d.kind + ", " + d.designation.split(separator: " ").prefix(1).joined() + ". ") {
+                    items.append(it)
+                }
+            }
+        }
 
         return night.report(items)
     }
@@ -392,6 +410,7 @@ struct TonightPanel: View {
         case .satellite: Color(red: 0.31, green: 0.80, blue: 0.81)
         case .constellation: Color(red: 0.72, green: 0.74, blue: 0.80)
         case .star: Color(red: 0.93, green: 0.91, blue: 0.78)
+        case .deepSky: Color(red: 0.74, green: 0.66, blue: 0.95)
         }
     }
 }
@@ -409,7 +428,7 @@ struct TonightChart: View {
             let n = r.sunCurve.count
             let span = r.end.timeIntervalSince(r.start)
             func x(_ d: Date) -> CGFloat { CGFloat(d.timeIntervalSince(r.start) / span) * size.width }
-            let top: CGFloat = 16, bottom: CGFloat = size.height - 16
+            let top: CGFloat = 28, bottom: CGFloat = size.height - 16
             func y(_ alt: Double) -> CGFloat { top + (bottom - top) * CGFloat((90 - alt) / 180) }
 
             // sky bands, coloured by how far down the Sun is
@@ -461,16 +480,28 @@ struct TonightChart: View {
                     gc.stroke(path, with: .color(.white.opacity(above ? 0.95 : 0.35)),
                               style: StrokeStyle(lineWidth: above ? 2 : 1.2, dash: above ? [] : [2, 3]))
                 }
+                // labels in two rows above the chart, the second only when the first is taken
+                var taken: [CGRect] = []
                 func mark(_ d: Date, _ label: String) {
                     var l = Path()
                     l.move(to: CGPoint(x: x(d), y: top)); l.addLine(to: CGPoint(x: x(d), y: bottom))
                     gc.stroke(l, with: .color(.white.opacity(0.25)), lineWidth: 0.8)
-                    let t = Text("\(label) \(clock(d))").font(.system(size: 9, weight: .medium)).foregroundStyle(.white.opacity(0.8))
-                    gc.draw(t, at: CGPoint(x: min(max(x(d), 40), size.width - 40), y: 6))
+                    let t = gc.resolve(Text("\(label) \(clock(d))").font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.8)))
+                    let w = t.measure(in: size).width
+                    let cx = min(max(x(d), w / 2 + 2), size.width - w / 2 - 2)
+                    for row in [6.0, 18.0] {
+                        let r = CGRect(x: cx - w / 2 - 3, y: row - 5, width: w + 6, height: 10)
+                        if !taken.contains(where: { $0.intersects(r) }) {
+                            taken.append(r)
+                            gc.draw(t, at: CGPoint(x: cx, y: row))
+                            return
+                        }
+                    }
                 }
+                if let b = item.best { mark(b, "Best") }
                 item.events.rises.forEach { mark($0.date, "Rise") }
                 item.events.sets.forEach { mark($0.date, "Set") }
-                if let b = item.best { mark(b, "Best") }
             }
             // now
             if now > r.start, now < r.end {
@@ -536,6 +567,12 @@ struct TileIcon: View {
                 p.addLines(pts)
                 gc.stroke(p, with: .color(.white.opacity(0.45)), lineWidth: 1)
                 for q in pts { gc.fill(Path(ellipseIn: CGRect(x: q.x - 2, y: q.y - 2, width: 4, height: 4)), with: .color(.white)) }
+            case .deepSky:
+                let violet = Color(red: 0.74, green: 0.66, blue: 0.95)
+                gc.fill(Path(ellipseIn: CGRect(x: c.x - r * 0.55, y: c.y - r * 0.3, width: r * 1.1, height: r * 0.6)),
+                        with: .color(violet.opacity(0.35)))
+                gc.stroke(Path(ellipseIn: CGRect(x: c.x - r * 0.8, y: c.y - r * 0.8, width: r * 1.6, height: r * 1.6)),
+                          with: .color(violet.opacity(0.8)), style: StrokeStyle(lineWidth: 1.2, dash: [3, 3]))
             case .star:
                 var s = Path()
                 s.move(to: CGPoint(x: c.x, y: c.y - r)); s.addLine(to: CGPoint(x: c.x, y: c.y + r))

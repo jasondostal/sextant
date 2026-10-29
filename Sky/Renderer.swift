@@ -33,6 +33,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var fade: [Float]
     private var focused: Int?
     private var lastFrame = Date()
+    private var frameDt: Float = 0
     private let milkyWay: MTLTexture
     /// Per-frame satellite glows; three so the CPU never writes one the GPU is reading.
     private let satBuffers: [MTLBuffer]
@@ -116,6 +117,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         let size = view.drawableSize
         let date = model.now
         model.tick(date)
+        let wall = Date()
+        frameDt = Float(min(0.1, wall.timeIntervalSince(lastFrame)))
+        lastFrame = wall
         let frame = model.frame(at: date)
         let bodies = model.bodies(at: date)
         let cam = model.camera
@@ -172,7 +176,15 @@ final class Renderer: NSObject, MTKViewDelegate {
             enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: satCount)
         }
 
+        // looking down at a target that has set: see through the Earth, as Star Walk does
+        var through = false
+        if let t = model.target, let r = model.resolve(t, at: date), r.horizontal.altitude < -0.5 {
+            through = Horizontal(vector: SIMD3<Double>(cam.basis.forward)).altitude < 5
+        }
+        model.groundAlpha += ((through ? 0.08 : 1) - model.groundAlpha) * min(1, frameDt * 5)
+        var fadeGround = model.groundAlpha
         enc.setRenderPipelineState(ground)
+        enc.setFragmentBytes(&fadeGround, length: 4, index: 1)
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         if model.nightMode {
             enc.setRenderPipelineState(night)
@@ -187,9 +199,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// Auto: the figure you're looking at (or the selected object sits in) fades in
     /// bright and the rest fade out. Always: all dim, that one bright. Never: none.
     private func drawFigures(_ enc: MTLRenderCommandEncoder, date: Date, darkness: Float) {
-        let now = Date()
-        let dt = Float(min(0.1, now.timeIntervalSince(lastFrame)))
-        lastFrame = now
+        let dt = frameDt
         let mode = model.lineMode
         if mode == .never { return }
 

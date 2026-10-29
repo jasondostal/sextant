@@ -24,6 +24,7 @@ struct SettingsPanel: View {
                 .labelsHidden()
                 Text(lineHint).font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
             }
+            Toggle("Ecliptic (the Sun's and planets' path)", isOn: $model.showEcliptic).font(.system(size: 13, weight: .medium))
             Toggle("Night mode (red)", isOn: $model.nightMode).font(.system(size: 13, weight: .medium))
         }
         .foregroundStyle(.white)
