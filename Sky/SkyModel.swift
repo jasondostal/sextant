@@ -17,6 +17,11 @@ final class SkyModel {
     @ObservationIgnored private var bodyCache: (Date, Observer, [BodyPosition])?
     @ObservationIgnored private let locator = Locator()
     @ObservationIgnored private let motion = MotionTracker()
+    @ObservationIgnored let satellites = SatelliteTracker()
+    @ObservationIgnored private let feed = SatelliteFeed()
+    /// When the satellite orbits in use were downloaded; nil until there are any.
+    var satellitesFetched: Date?
+    var satelliteCount = 0
 
     var pointing: Bool { camera.attitude != nil }
     var canPoint: Bool { motion.available }
@@ -36,6 +41,13 @@ final class SkyModel {
             self.location = .gps(loc.timestamp)
         }
         if !argumentsSetPlace { locator.start() }
+        feed.onCatalog = { [weak self] cat, at in
+            guard let self else { return }
+            self.satellites.setCatalog(cat)
+            self.satellitesFetched = at
+            self.satelliteCount = cat.satellites.count
+        }
+        feed.start()
     }
 
     var now: Date { fixedDate ?? Date() }
@@ -49,6 +61,20 @@ final class SkyModel {
         let b = Body.allCases.map { f.position(of: $0) }
         bodyCache = (date, observer, b)
         return b
+    }
+
+    /// Faintest star drawn: deeper as you zoom in, like binoculars.
+    func starLimit(fov: Double) -> Double { min(8.0, 6.3 + 2.0 * log10(max(1, 75 / fov))) }
+
+    /// Satellites you could actually see: up, sunlit, against a darkening sky,
+    /// and bright enough for the zoom.
+    func visibleSatellites(at date: Date) -> [SatelliteTracker.Visible] {
+        guard let sun = bodies(at: date).first(where: { $0.body == .sun }),
+              sun.geometric.altitude < -3 else { return [] }
+        let limit = min(7.5, starLimit(fov: camera.fov) - 1.0)
+        return satellites.positions(at: date, observer: observer)
+            .filter { $0.position.sunlit && $0.position.magnitude <= limit }
+            .sorted { $0.position.magnitude < $1.position.magnitude }
     }
 
     // MARK: point mode and gestures

@@ -118,7 +118,7 @@ func terrainHeight(azimuthRadians az: Double) -> Double {
 }
 
 struct SkyObject {
-    enum Kind { case star, planet, moon, sun }
+    enum Kind { case star, planet, moon, sun, satellite }
     let name: String
     let kind: Kind
     let magnitude: Double
@@ -126,6 +126,7 @@ struct SkyObject {
     let screen: CGPoint
     /// Set, or behind the ridge: still drawn, through the lake, dimmed.
     let hidden: Bool
+    var rangeKm: Double? = nil
 }
 
 // Star Walk 2's label colours, measured from Jason's screenshots.
@@ -135,6 +136,7 @@ private let planetName = Color(red: 0.75, green: 0.44, blue: 0.45)
 private let sunName = Color(red: 0.82, green: 0.82, blue: 0.32)
 private let moonName = Color(red: 0.85, green: 0.86, blue: 0.88)
 private let constellationName = Color(red: 0.72, green: 0.74, blue: 0.80)
+private let satelliteName = Color(red: 0.31, green: 0.80, blue: 0.81)
 
 struct Labels: View {
     let model: SkyModel
@@ -160,12 +162,15 @@ struct Labels: View {
             // star and planet names, brightest first, skipping any that would collide
             var taken: [CGRect] = []
             let nameLimit = min(5.0, 2.4 + 2.0 * log2(max(1, 75 / cam.fov)))
-            for o in visible where o.kind != .star || o.magnitude <= nameLimit {
+            let satNameLimit = min(6.5, 5.0 + 2.0 * log2(max(1, 75 / cam.fov)))
+            for o in visible where (o.kind != .star || o.magnitude <= nameLimit)
+                && (o.kind != .satellite || o.magnitude <= satNameLimit) {
                 let color = switch o.kind {
                 case .star: o.magnitude < 1 ? brightStarName : starName
                 case .planet: planetName
                 case .sun: sunName
                 case .moon: moonName
+                case .satellite: satelliteName
                 }
                 let text = Text(o.name).font(.system(size: 15, weight: .regular))
                     .foregroundStyle(color.opacity(o.hidden ? 0.45 : 1))
@@ -228,7 +233,25 @@ struct Labels: View {
             out.append(SkyObject(name: name, kind: .star, magnitude: Double(s.magnitude), horizontal: app,
                                  screen: p, hidden: !aboveLand(app)))
         }
+        for v in model.visibleSatellites(at: date) {
+            let geo = SIMD3<Float>(v.position.horizontal.vector)
+            let app = Horizontal(vector: SIMD3<Double>(refractHorizon(geo)))
+            guard aboveLand(app), let p = proj.point(refractHorizon(geo)) else { continue }
+            out.append(SkyObject(name: Self.displayName(v.satellite.name), kind: .satellite,
+                                 magnitude: v.position.magnitude, horizontal: app, screen: p, hidden: false,
+                                 rangeKm: v.position.rangeKm))
+        }
         return out.sorted { $0.magnitude < $1.magnitude }
+    }
+
+    /// CelesTrak's names, made readable: "ISS (ZARYA)" → "ISS", "CSS (TIANHE)" → "Tiangong".
+    static func displayName(_ n: String) -> String {
+        switch n {
+        case "ISS (ZARYA)": return "ISS"
+        case "CSS (TIANHE)": return "Tiangong"
+        case "HST": return "Hubble"
+        default: return n
+        }
     }
 
     private func drawPill(_ gc: GraphicsContext, for o: SkyObject, size: CGSize) {
@@ -237,9 +260,11 @@ struct Labels: View {
         case .planet: "Planet"
         case .moon: "Moon"
         case .sun: "Sun"
+        case .satellite: "Satellite"
         }
-        let detail = String(format: "%@ · mag %.1f · %.0f° up, %@", kind, o.magnitude, o.horizontal.altitude,
+        var detail = String(format: "%@ · mag %.1f · %.0f° up, %@", kind, o.magnitude, o.horizontal.altitude,
                             compassPoint(o.horizontal.azimuth))
+        if let r = o.rangeKm { detail += String(format: " · %.0f km away", r) }
         let title = gc.resolve(Text(o.name).font(.system(size: 17, weight: .semibold)).foregroundStyle(.white))
         let sub = gc.resolve(Text(detail).font(.system(size: 12)).foregroundStyle(.white.opacity(0.7)))
         let ts = title.measure(in: size), ss = sub.measure(in: size)
@@ -273,9 +298,21 @@ struct Readout: View {
                 Text(timeText(model.fixedDate ?? t.date))
                     .foregroundStyle(model.fixedDate == nil ? .white.opacity(0.75) : Self.amber)
                 Spacer()
+                satellites(t.date)
                 Text(String(format: "%.0f° FOV", model.camera.fov)).foregroundStyle(.white.opacity(0.5))
             }
             .font(.system(size: 12, weight: .medium).monospacedDigit())
+        }
+    }
+
+    /// Orbit data age: amber after 3 days, when predictions start drifting.
+    @ViewBuilder private func satellites(_ now: Date) -> some View {
+        if let at = model.satellitesFetched {
+            let hours = now.timeIntervalSince(at) / 3600
+            Text("\(model.satelliteCount) sats · " + (hours < 1 ? "fresh" : hours < 48 ? "\(Int(hours)) h old" : "\(Int(hours / 24)) d old"))
+                .foregroundStyle(hours > 72 ? Self.amber : .white.opacity(0.5))
+        } else {
+            Text("no satellite data").foregroundStyle(Self.amber)
         }
     }
 

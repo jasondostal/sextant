@@ -27,6 +27,11 @@ final class Renderer: NSObject, MTKViewDelegate {
     private let starBuffer, lineBuffer: MTLBuffer
     private let starCount, lineVertexCount: Int
     private let milkyWay: MTLTexture
+    /// Per-frame satellite glows; three so the CPU never writes one the GPU is reading.
+    private let satBuffers: [MTLBuffer]
+    private var satFrame = 0
+    private let inFlight = DispatchSemaphore(value: 3)
+    static let maxSatellites = 4096
 
     init(view: MTKView, model: SkyModel) {
         self.model = model
@@ -80,6 +85,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
         lineVertexCount = seg.count / 3
         lineBuffer = device.makeBuffer(bytes: seg, length: seg.count * 4)!
+        satBuffers = (0..<3).map { _ in device.makeBuffer(length: Self.maxSatellites * 32, options: .storageModeShared)! }
         super.init()
     }
 
@@ -101,8 +107,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         // 0 by day, 1 once the sun is 15° down; stars come through in between
         let darkness = Float(min(1, max(0, (-sun.geometric.altitude - 1) / 14)))
         let vp = cam.viewProj(size)
-        // fainter stars as you zoom in, like a pair of binoculars
-        let limit = Float(min(8.0, 6.3 + 2.0 * log10(max(1, 75 / cam.fov))))
+        let limit = Float(model.starLimit(fov: cam.fov))
         var u = Uniforms(
             viewProj: vp, invViewProj: vp.inverse,
             eqjToHor: simd_float3x3(
@@ -115,9 +120,13 @@ final class Renderer: NSObject, MTKViewDelegate {
             limitMag: limit, darkness: darkness, scale: scale)
 
         var bodyGlows = Self.glows(bodies, pixelsPerDegree: cam.perDegree(size) / Double(scale))
+        inFlight.wait()
+        let satBuffer = satBuffers[satFrame % 3]
+        satFrame += 1
+        let satCount = Self.writeSatellites(model.visibleSatellites(at: date), into: satBuffer)
 
         pass.colorAttachments[0].loadAction = .dontCare
-        guard let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return }
+        guard let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { inFlight.signal(); return }
         enc.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
 
         enc.setRenderPipelineState(sky)
@@ -140,10 +149,16 @@ final class Renderer: NSObject, MTKViewDelegate {
         enc.setVertexBytes(&catalog, length: 4, index: 2)
         enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: bodies.count)
 
+        if satCount > 0 {
+            enc.setVertexBuffer(satBuffer, offset: 0, index: 0)
+            enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: satCount)
+        }
+
         enc.setRenderPipelineState(ground)
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         enc.endEncoding()
         cmd.present(drawable)
+        cmd.addCompletedHandler { [inFlight] _ in inFlight.signal() }
         cmd.commit()
     }
 
@@ -155,6 +170,24 @@ final class Renderer: NSObject, MTKViewDelegate {
             let (radius, c) = look(b, pixelsPerDegree: pixelsPerDegree)
             return [v.x, v.y, v.z, radius, c.x, c.y, c.z, c.w]
         }
+    }
+
+    /// Satellites as small crisp dots, sized and dimmed by magnitude, a cool white
+    /// like Star Walk's. Directions are horizon-frame, so they go in as bodies do.
+    private static func writeSatellites(_ sats: [SatelliteTracker.Visible], into buffer: MTLBuffer) -> Int {
+        let n = min(sats.count, maxSatellites)
+        let p = buffer.contents().bindMemory(to: Float.self, capacity: n * 8)
+        for i in 0..<n {
+            let s = sats[i].position
+            let v = SIMD3<Float>(s.horizontal.vector)
+            let m = Float(s.magnitude)
+            let a = min(1, max(0.6, (7 - m) / 4))
+            let o = i * 8
+            p[o] = v.x; p[o + 1] = v.y; p[o + 2] = v.z
+            p[o + 3] = min(5.5, max(2.6, 4.6 - 0.45 * m))
+            p[o + 4] = 0.88 * a; p[o + 5] = 0.97 * a; p[o + 6] = 1.0 * a; p[o + 7] = a
+        }
+        return n
     }
 
     static func look(_ b: BodyPosition, pixelsPerDegree: Double) -> (Float, SIMD4<Float>) {

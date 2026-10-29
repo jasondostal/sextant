@@ -3,3 +3,4 @@ DerivedData/
 *.xcodeproj/
 xcuserdata/
 .DS_Store
+tools/oracle/.venv/

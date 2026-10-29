@@ -7,3 +7,6 @@
   the Milky Way outline in `sky-data.json`.
 - **ESO/S. Brunier, "The Milky Way panorama" (eso0932a, CC BY 4.0)** — `Sky/Resources/milkyway.png`
   is derived from it (greyscale, stars median-filtered out) by `tools/gen-milkyway.py`.
+- **SatelliteKit 2.1.2** (Gavin Eadie, MIT) — SGP4/SDP4, via Swift Package Manager.
+- **CelesTrak** — orbital elements (GP/OMM) fetched on device; SATCAT radar cross-sections
+  in `satmags.bin` (`tools/gen-satmags.py`).
