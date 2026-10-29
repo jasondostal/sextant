@@ -52,7 +52,7 @@ public enum Almanac {
     }
 
     /// Bisect to 0.1 s for the instant `f` changes sign; `above` says which side is positive at `b`.
-    static func bisect(_ a: Date, _ b: Date, above: Bool, _ f: (Date) -> Double) -> Date {
+    public static func bisect(_ a: Date, _ b: Date, above: Bool, _ f: (Date) -> Double) -> Date {
         var lo = a, hi = b
         while hi.timeIntervalSince(lo) > 0.1 {
             let mid = lo.addingTimeInterval(hi.timeIntervalSince(lo) / 2)

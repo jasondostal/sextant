@@ -19,8 +19,8 @@
 - [x] Search; tap to select. [ ] Detail card beyond the pill.
 - [x] Time travel: tap the clock, pick day/hour/minute, drag the edge ruler (20 pt/unit); days are calendar days.
 - [x] Visible Tonight (Jason's favourite Star Walk screen): date stepper, altitude chart on day/twilight/night bands, verdict, Show at <time> (time-travels + flies), grid; satellites get visible passes (bars + list), not orbit wiggles. Rise/set/passes gated vs Skyfield.
-- [ ] Visible Tonight: deep-sky tiles; tap a pass row to jump to that pass.
-- [ ] Detail card like Star Walk's Sky Live card: rise/transit/set with azimuths, altitude chart, Figures.
+- [x] Visible Tonight: tap a pass row to jump to that pass. [ ] Deep-sky tiles.
+- [x] Detail card (tap the pill): satellites get "fades into Earth's shadow in 4:20" / "sets in 6:08" (checked vs Skyfield to 1 s) and the next day's visible passes (tap to jump); everything else gets position, magnitude, phase, distance, RA/Dec, tonight's chart and rise/highest/set with azimuths.
 - [ ] Constellation lines only for the target's constellation; ground fades when flying below the horizon; ecliptic; Night Mode.
 - [ ] Default FOV: Star Walk's point mode is ~88° wide, ours 75° (check if Jason had zoomed).
 

@@ -11,6 +11,8 @@ struct SkyView: View {
     @State private var searching = UserDefaults.standard.string(forKey: "search") != nil
     // `-tonight YES` opens Visible tonight (screenshots)
     @State private var tonight = UserDefaults.standard.bool(forKey: "tonight")
+    // `-card YES` opens the selected object's card (screenshots)
+    @State private var card = UserDefaults.standard.bool(forKey: "card")
 
     var body: some View {
         ZStack {
@@ -20,6 +22,17 @@ struct SkyView: View {
             }
             if tonight {
                 TonightPanel(model: model, open: $tonight)
+            }
+            if card, let t = model.target {
+                VStack {
+                    Spacer()
+                    DetailCard(model: model, target: t, open: $card)
+                        .frame(maxHeight: 460)
+                }
+                .padding(.horizontal, 12).padding(.bottom, 10)
+                #if os(macOS)
+                .padding(.top, 28)
+                #endif
             }
         }
         .ignoresSafeArea(.container)
@@ -59,6 +72,14 @@ struct SkyView: View {
                         }
                         Spacer()
                         if model.canPoint { PointButton(model: model) }
+                    }
+                    .overlay(alignment: .bottom) {
+                        // the pill is drawn in the label canvas; this is its tap target
+                        if model.target != nil, !card {
+                            Color.clear.frame(width: 260, height: 56).contentShape(Rectangle())
+                                .onTapGesture { card = true }
+                                .offset(y: -4)
+                        }
                     }
                 }
                 .padding(.horizontal, 20)

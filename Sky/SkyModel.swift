@@ -192,7 +192,9 @@ final class SkyModel {
     /// `-select Jupiter` picks the first search result (satellites once their data loads).
     private func applySelectArgument() {
         guard target == nil, let q = UserDefaults.standard.string(forKey: "select"),
-              let t = search(q).first else { return }
+              let t = search(q).first, let r = resolve(t, at: now) else { return }
+        // only a name that starts with it: "ISS" mustn't settle for Meissa before the satellites load
+        if case .satellite = t {} else if !r.name.lowercased().hasPrefix(q.lowercased()) { return }
         select(t)
     }
 

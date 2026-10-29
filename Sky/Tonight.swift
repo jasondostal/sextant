@@ -41,21 +41,38 @@ struct TonightReport {
         Calendar.current.startOfDay(for: date.addingTimeInterval(-12 * 3600))
     }
 
-    static func build(day: Date, observer: Observer, sky: SkyData, satellites: [Satellite]) -> TonightReport {
-        let cal = Calendar.current
-        let start = cal.date(bySettingHour: 12, minute: 0, second: 0, of: day)!
-        let end = cal.date(byAdding: .day, value: 1, to: start)!
+    /// The noon-to-noon window around one night, sampled every 10 min, with the Sun's part worked out.
+    struct Night {
+        let day: Date, start: Date, end: Date
         let step: TimeInterval = 600
-        let n = Int(end.timeIntervalSince(start) / step)
-        let frames = (0...n).map { SkyFrame(date: start.addingTimeInterval(Double($0) * step), observer: observer) }
-        let sunCurve = frames.map { $0.position(of: .sun).geometric.altitude }
-        let sunEvents = SkyFrame.events(of: .sun, observer: observer, from: start, to: end)
-        let twilight = Almanac.events(from: start, to: end, horizon: -6) {
-            SkyFrame(date: $0, observer: observer).position(of: .sun).geometric
-        }
-        let dark = sunCurve.indices.filter { sunCurve[$0] < -6 }
-        let dusk = twilight.sets.first?.date, dawn = twilight.rises.first?.date
+        let n: Int
+        let frames: [SkyFrame]
+        let sunCurve: [Double]
+        let sunEvents: Almanac.Events
+        let dusk: Date?, dawn: Date?
+        /// Samples with the Sun 6° or more down.
+        let dark: [Int]
 
+        init(day: Date, observer: Observer) {
+            let cal = Calendar.current
+            self.day = day
+            start = cal.date(bySettingHour: 12, minute: 0, second: 0, of: day)!
+            end = cal.date(byAdding: .day, value: 1, to: start)!
+            n = Int(end.timeIntervalSince(start) / step)
+            let (start, step) = (start, step)
+            frames = (0...n).map { SkyFrame(date: start.addingTimeInterval(Double($0) * step), observer: observer) }
+            let sunCurve = frames.map { $0.position(of: .sun).geometric.altitude }
+            self.sunCurve = sunCurve
+            sunEvents = SkyFrame.events(of: .sun, observer: observer, from: start, to: end)
+            let twilight = Almanac.events(from: start, to: end, horizon: -6) {
+                SkyFrame(date: $0, observer: observer).position(of: .sun).geometric
+            }
+            dusk = twilight.sets.first?.date
+            dawn = twilight.rises.first?.date
+            dark = sunCurve.indices.filter { sunCurve[$0] < -6 }
+        }
+
+        /// A tile for something up after dark; nil if it never gets 5° up then.
         func item(_ id: Target, _ name: String, _ kind: TonightItem.Kind, curve: [Double], events: Almanac.Events,
                   phase: Double? = nil, prefix: String = "") -> TonightItem? {
             guard let bestIdx = dark.max(by: { curve[$0] < curve[$1] }), curve[bestIdx] > 5 else { return nil }
@@ -65,6 +82,16 @@ struct TonightReport {
             return TonightItem(id: id, name: name, kind: kind, verdict: v, subtitle: "best \(clock(best))",
                                curve: curve, events: events, passes: [], best: best, phase: phase)
         }
+
+        func report(_ items: [TonightItem]) -> TonightReport {
+            TonightReport(day: day, start: start, step: step, sunCurve: sunCurve, sunset: sunEvents.sets.first?.date,
+                          sunrise: sunEvents.rises.first?.date, dusk: dusk, dawn: dawn, items: items)
+        }
+    }
+
+    static func build(day: Date, observer: Observer, sky: SkyData, satellites: [Satellite]) -> TonightReport {
+        let night = Night(day: day, observer: observer)
+        let (start, end, n, frames, dark, sunEvents) = (night.start, night.end, night.n, night.frames, night.dark, night.sunEvents)
 
         var items: [TonightItem] = []
         // the Moon and the naked-eye planets
@@ -78,7 +105,7 @@ struct TonightReport {
                 phase = waxing ? pos[mid].phase : -pos[mid].phase
                 prefix = moonPhaseName(pos[mid].phase, waxing: waxing) + ", \(Int((pos[mid].phase * 100).rounded()))% lit. "
             }
-            if let it = item(.body(b), b.rawValue, b == .moon ? .moon : .planet, curve: pos.map(\.geometric.altitude),
+            if let it = night.item(.body(b), b.rawValue, b == .moon ? .moon : .planet, curve: pos.map(\.geometric.altitude),
                              events: ev, phase: phase, prefix: prefix) { items.append(it) }
         }
 
@@ -123,7 +150,7 @@ struct TonightReport {
                 let ev = Almanac.events(from: start, to: end, horizon: 0) {
                     Horizontal(vector: SkyFrame(date: $0, observer: observer).eqjToHor * SIMD3<Double>(c.direction))
                 }
-                if let it = item(.constellation(i), c.name, .constellation, curve: curve, events: ev) { items.append(it) }
+                if let it = night.item(.constellation(i), c.name, .constellation, curve: curve, events: ev) { items.append(it) }
             }
         }
 
@@ -136,13 +163,11 @@ struct TonightReport {
             let curve = frames.map { $0.horizontal(star: dir).altitude }
             guard dark.contains(where: { curve[$0] > 15 }) else { continue }
             let ev = SkyFrame.events(ofStar: dir, observer: observer, from: start, to: end)
-            if let it = item(.star(i), cat.names[i]!, .star, curve: curve, events: ev) { starItems.append(it) }
+            if let it = night.item(.star(i), cat.names[i]!, .star, curve: curve, events: ev) { starItems.append(it) }
         }
         items += starItems
 
-        return TonightReport(day: day, start: start, step: step, sunCurve: sunCurve,
-                             sunset: sunEvents.sets.first?.date, sunrise: sunEvents.rises.first?.date,
-                             dusk: dusk, dawn: dawn, items: items)
+        return night.report(items)
     }
 
     /// One sentence on when it's up after dark.
@@ -316,6 +341,10 @@ struct TonightPanel: View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(Array(item.passes.enumerated()), id: \.offset) { _, p in
                 let from = p.visibleFrom ?? p.rise, to = p.visibleTo ?? p.set, top = p.visiblePeak ?? p.peak
+                Button {
+                    model.show(item.id, at: top.date)
+                    open = false
+                } label: {
                 HStack(spacing: 10) {
                     Text(clock(top.date)).frame(width: 74, alignment: .leading)
                     Text("\(compassPoint(from.horizontal.azimuth)) → \(compassPoint(to.horizontal.azimuth))")
@@ -328,6 +357,9 @@ struct TonightPanel: View {
                 }
                 .font(.system(size: 12, weight: .medium).monospacedDigit())
                 .foregroundStyle(.white.opacity(0.85))
+                .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
         }
     }
