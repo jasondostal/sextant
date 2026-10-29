@@ -59,6 +59,8 @@ final class SkyModel {
             self.applySelectArgument()
         }
         feed.start()
+        // phone out, already pointing: the moving dot won't wait for a mode switch
+        if motion.available, UserDefaults.standard.bool(forKey: "pointMode") { setPointing(true) }
     }
 
     var now: Date { date(at: Date()) }
@@ -119,6 +121,7 @@ final class SkyModel {
     // MARK: point mode and gestures
 
     func setPointing(_ on: Bool) {
+        if motion.available { UserDefaults.standard.set(on, forKey: "pointMode") }
         if on {
             motion.onUpdate = { [weak self] b in self?.camera.attitude = b }
             motion.start()

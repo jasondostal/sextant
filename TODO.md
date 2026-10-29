@@ -6,6 +6,12 @@
 - [ ] Point-mode guide arrow (Star Walk style, turn-direction) on the device: find the ISS with it.
 - [ ] Gesture feel (inertia on drag), 60 fps check, battery.
 
+## "What's that moving?" (how Jason actually uses it, 2026-10-29)
+- [x] Opens straight into Pointing if that's how it was left.
+- [x] 8 s motion trails on lit satellites, to match the dot crossing the sky.
+- [x] Search opens on OVERHEAD NOW: lit satellites up right now, with heading.
+- [ ] Check in the field at dawn: does the trail direction match what's seen? Offline start from cached orbits.
+
 ## Phase 1 polish (vs Star Walk 2)
 - [x] Moon drawn with its phase (lit limb toward the sun), earthshine.
 - [x] Named deep-sky objects (21), searchable; Milky Way texture registered (was 3.7° off).

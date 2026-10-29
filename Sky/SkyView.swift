@@ -26,7 +26,7 @@ struct SkyView: View {
             ZStack {
                 MetalSky(model: model)
                 TimelineView(.animation) { timeline in
-                    Labels(model: model, date: model.date(at: timeline.date))
+                    Labels(model: model, date: model.date(at: timeline.date), frameTime: timeline.date)
                 }
                 .allowsHitTesting(false)
                 if model.timeBarOpen {
@@ -229,6 +229,8 @@ private let deepSkyName = Color(red: 0.74, green: 0.66, blue: 0.95)
 struct Labels: View {
     let model: SkyModel
     let date: Date
+    /// The wall clock, so a frozen sky still redraws when satellite sweeps land.
+    var frameTime: Date = .distantPast
 
     var body: some View {
         Canvas { gc, size in
@@ -244,6 +246,7 @@ struct Labels: View {
             if model.timeBarOpen { topBand += 48 }
 
             if case .satellite(let id)? = model.target { drawTrack(gc, satellite: id, proj: proj, size: size) }
+            drawTrails(gc, satellites: visible.filter { $0.kind == .satellite }, proj: proj)
 
             // constellation names: only the major ones when zoomed out
             let maxRank = cam.fov > 70 ? 1 : cam.fov > 35 ? 2 : 3
@@ -361,6 +364,33 @@ struct Labels: View {
             }
         }
         gc.stroke(path, with: .color(color.opacity(0.45)), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+    }
+
+    /// A short fading tail behind each satellite: where it was over the last
+    /// 8 s, so the dot on the phone can be matched to the one crossing the sky.
+    private func drawTrails(_ gc: GraphicsContext, satellites: [SkyObject], proj: Projector) {
+        guard !satellites.isEmpty else { return }
+        let steps = [8.0, 5, 2.5]
+        let frames = steps.map { SatelliteFrame(date: date.addingTimeInterval(-$0), observer: model.observer) }
+        let color = Color(red: 0.31, green: 0.80, blue: 0.81)
+        for o in satellites {
+            guard case .satellite(let id)? = o.target, let sat = model.satellites.satellite(id: id) else { continue }
+            var pts: [CGPoint] = []
+            for f in frames {
+                guard let p = f.position(of: sat),
+                      let pt = proj.point(refractHorizon(SIMD3<Float>(p.horizontal.vector))) else { continue }
+                pts.append(pt)
+            }
+            pts.append(o.screen)
+            guard pts.count > 1 else { continue }
+            for i in 1..<pts.count {
+                var seg = Path()
+                seg.move(to: pts[i - 1])
+                seg.addLine(to: pts[i])
+                let a = 0.55 * Double(i) / Double(pts.count - 1)
+                gc.stroke(seg, with: .color(color.opacity(a)), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+            }
+        }
     }
 
     /// CelesTrak's names, made readable: "ISS (ZARYA)" → "ISS", "CSS (TIANHE)" → "Tiangong".

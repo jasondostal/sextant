@@ -49,7 +49,11 @@ extension SkyModel {
         case .satellite(let id):
             guard let s = satellites.satellite(id: id),
                   let p = SatelliteFrame(date: date, observer: observer).position(of: s) else { return nil }
-            let lit = p.horizontal.altitude < 0 ? "" : p.sunlit ? String(format: " · mag %.1f", p.magnitude) : " · in Earth's shadow"
+            var lit = p.horizontal.altitude < 0 ? "" : p.sunlit ? String(format: " · mag %.1f", p.magnitude) : " · in Earth's shadow"
+            // which way it's going: where it'll be in a minute
+            if p.horizontal.altitude > 0, let ahead = SatelliteFrame(date: date.addingTimeInterval(60), observer: observer).position(of: s) {
+                lit += " · heading " + compassPoint(ahead.horizontal.azimuth)
+            }
             return Resolved(name: Labels.displayName(s.name), kind: .satellite, horizontal: apparent(p.horizontal.vector),
                             magnitude: p.sunlit ? p.magnitude : nil, rangeKm: p.rangeKm, detail: "Satellite" + lit)
         }
@@ -78,6 +82,17 @@ extension SkyModel {
             if hits.count > 4000 { break }
         }
         return hits.sorted { $0.0 < $1.0 }.prefix(limit).map(\.1)
+    }
+
+    /// Lit satellites up right now, brightest first: "what's that moving?"
+    func overheadNow(limit: Int = 8) -> [Target] {
+        let date = now
+        guard let sun = bodies(at: date).first(where: { $0.body == .sun }), sun.geometric.altitude < -3,
+              satellitesValid(at: date) else { return [] }
+        return satellites.positions(at: date, observer: observer)
+            .filter { $0.position.sunlit && $0.position.horizontal.altitude > 5 && $0.position.magnitude <= 5.5 }
+            .sorted { $0.position.magnitude < $1.position.magnitude }
+            .prefix(limit).map { .satellite($0.satellite.id) }
     }
 
     /// Before anything is typed: the solar system and the famous satellites,
@@ -122,22 +137,26 @@ struct SearchPanel: View {
             .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
             .padding(14)
 
-            let date = model.now
             // re-run the search when satellite data arrives (it loads in the background)
             let _ = model.satelliteCount
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    if query.isEmpty {
-                        Text("UP TONIGHT").font(.system(size: 11, weight: .semibold)).tracking(1.5)
-                            .foregroundStyle(.white.opacity(0.45)).padding(.horizontal, 18).padding(.bottom, 6)
-                    }
-                    ForEach(model.search(query), id: \.self) { t in
-                        if let r = model.resolve(t, at: date) {
-                            Button {
-                                model.select(t)
-                                open = false
-                            } label: { row(r) }
-                            .buttonStyle(.plain)
+            // and every second: what's overhead changes, and the first sweep lands after the panel opens
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                let date = model.now
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        if query.isEmpty {
+                            let overhead = model.overheadNow()
+                            header("OVERHEAD NOW")
+                            if overhead.isEmpty {
+                                Text("Nothing lit overhead. Satellites shine in the hours after dusk and before dawn, when the sky is dark but they're still in sunlight.")
+                                    .font(.system(size: 12)).foregroundStyle(.white.opacity(0.45))
+                                    .padding(.horizontal, 18).padding(.bottom, 10)
+                            }
+                            results(overhead, date)
+                            header("UP TONIGHT").padding(.top, 8)
+                            results(model.suggestions().filter { !overhead.contains($0) }, date)
+                        } else {
+                            results(model.search(query), date)
                         }
                     }
                 }
@@ -148,6 +167,23 @@ struct SearchPanel: View {
         .overlay(RoundedRectangle(cornerRadius: 20).stroke(.white.opacity(0.12)))
         .padding(.horizontal, 16).padding(.vertical, 12)
         .onAppear { focused = true }
+    }
+
+    private func header(_ text: String) -> some View {
+        Text(text).font(.system(size: 11, weight: .semibold)).tracking(1.5)
+            .foregroundStyle(.white.opacity(0.45)).padding(.horizontal, 18).padding(.bottom, 6)
+    }
+
+    @ViewBuilder private func results(_ targets: [Target], _ date: Date) -> some View {
+        ForEach(targets, id: \.self) { t in
+            if let r = model.resolve(t, at: date) {
+                Button {
+                    model.select(t)
+                    open = false
+                } label: { row(r) }
+                .buttonStyle(.plain)
+            }
+        }
     }
 
     private func row(_ r: Resolved) -> some View {
