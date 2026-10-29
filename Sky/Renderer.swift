@@ -98,6 +98,7 @@ final class Renderer: NSObject, MTKViewDelegate {
               let cmd = queue.makeCommandBuffer() else { return }
         let size = view.drawableSize
         let date = model.now
+        model.tick(date)
         let frame = model.frame(at: date)
         let bodies = model.bodies(at: date)
         let cam = model.camera

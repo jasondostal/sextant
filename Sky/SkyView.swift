@@ -7,8 +7,21 @@ struct SkyView: View {
     @State private var model = SkyModel()
     @State private var lastDrag: CGSize = .zero
     @State private var lastZoom: CGFloat = 1
+    // `-search jup` opens the panel with a query (screenshots)
+    @State private var searching = UserDefaults.standard.string(forKey: "search") != nil
 
     var body: some View {
+        ZStack {
+            sky
+            if searching {
+                SearchPanel(model: model, open: $searching)
+            }
+        }
+        .ignoresSafeArea(.container)
+        .background(Color.black)
+    }
+
+    private var sky: some View {
         GeometryReader { geo in
             ZStack {
                 MetalSky(model: model)
@@ -19,11 +32,19 @@ struct SkyView: View {
                 VStack {
                     Readout(model: model)
                     Spacer()
-                    if model.canPoint {
-                        HStack {
-                            Spacer()
-                            PointButton(model: model)
+                    HStack {
+                        SearchButton(open: $searching)
+                        if model.target != nil {
+                            Button { model.clearTarget() } label: {
+                                Label("Clear", systemImage: "scope").font(.system(size: 13, weight: .semibold))
+                                    .padding(.horizontal, 12).padding(.vertical, 8)
+                                    .background(Capsule().fill(Color(red: 0.05, green: 0.09, blue: 0.20).opacity(0.82)))
+                                    .foregroundStyle(.white.opacity(0.8))
+                            }
+                            .buttonStyle(.plain)
                         }
+                        Spacer()
+                        if model.canPoint { PointButton(model: model) }
                     }
                 }
                 .padding(.horizontal, 20)
@@ -53,7 +74,6 @@ struct SkyView: View {
             )
         }
         .ignoresSafeArea()
-        .background(Color.black)
     }
 }
 
@@ -127,6 +147,8 @@ struct SkyObject {
     /// Set, or behind the ridge: still drawn, through the lake, dimmed.
     let hidden: Bool
     var rangeKm: Double? = nil
+    /// Overrides the pill's kind line (search targets carry their own).
+    var detail: String? = nil
 }
 
 // Star Walk 2's label colours, measured from Jason's screenshots.
@@ -201,10 +223,26 @@ struct Labels: View {
             gc.stroke(Path(ellipseIn: CGRect(x: c.x - 14, y: c.y - 14, width: 28, height: 28)),
                       with: .color(.white.opacity(0.55)), lineWidth: 1.2)
 
-            if let hit = visible.min(by: { dist($0.screen, c) < dist($1.screen, c) }),
-               dist(hit.screen, c) < min(size.width, size.height) * 0.07 {
-                drawPill(gc, for: hit, size: size)
+            let pickRadius = min(size.width, size.height) * 0.07
+            var picked = visible.min(by: { dist($0.screen, c) < dist($1.screen, c) })
+            if let p = picked, dist(p.screen, c) >= pickRadius { picked = nil }
+
+            if let t = model.target, let r = model.resolve(t, at: date) {
+                let v = SIMD3<Float>(r.horizontal.vector)
+                let ring = Color(red: 0.31, green: 0.80, blue: 0.81)
+                if let p = proj.point(v), p.x > 0, p.x < size.width, p.y > 0, p.y < size.height {
+                    gc.stroke(Path(ellipseIn: CGRect(x: p.x - 20, y: p.y - 20, width: 40, height: 40)),
+                              with: .color(ring), lineWidth: 2)
+                    if dist(p, c) < pickRadius {
+                        picked = SkyObject(name: r.name, kind: r.kind ?? .star, magnitude: r.magnitude ?? .nan,
+                                           horizontal: r.horizontal, screen: p, hidden: r.horizontal.altitude < 0,
+                                           rangeKm: r.rangeKm, detail: r.detail)
+                    }
+                } else {
+                    drawArrow(gc, toward: v, camera: cam, size: size, label: r.name, color: ring)
+                }
             }
+            if let hit = picked { drawPill(gc, for: hit, size: size) }
         }
     }
 
@@ -254,6 +292,31 @@ struct Labels: View {
         }
     }
 
+    /// An arrow at the edge of the screen pointing the way to turn.
+    private func drawArrow(_ gc: GraphicsContext, toward v: SIMD3<Float>, camera: Camera, size: CGSize,
+                           label: String, color: Color) {
+        let (r, u, _) = camera.basis
+        var d = CGVector(dx: CGFloat(simd_dot(v, r)), dy: -CGFloat(simd_dot(v, u)))
+        let len = hypot(d.dx, d.dy)
+        guard len > 1e-4 else { return }
+        d = CGVector(dx: d.dx / len, dy: d.dy / len)
+        let c = CGPoint(x: size.width / 2, y: size.height / 2)
+        // where the ray from the centre leaves an inset rectangle
+        let hw = size.width / 2 - 70, hh = size.height / 2 - 60
+        let t = min(abs(d.dx) > 1e-4 ? hw / abs(d.dx) : .infinity, abs(d.dy) > 1e-4 ? hh / abs(d.dy) : .infinity)
+        let tip = CGPoint(x: c.x + d.dx * t, y: c.y + d.dy * t)
+        let back = CGPoint(x: tip.x - d.dx * 22, y: tip.y - d.dy * 22)
+        let side = CGVector(dx: -d.dy * 11, dy: d.dx * 11)
+        var a = Path()
+        a.move(to: tip)
+        a.addLine(to: CGPoint(x: back.x + side.dx, y: back.y + side.dy))
+        a.addLine(to: CGPoint(x: back.x - side.dx, y: back.y - side.dy))
+        a.closeSubpath()
+        gc.fill(a, with: .color(color))
+        gc.draw(Text(label).font(.system(size: 13, weight: .semibold)).foregroundStyle(color),
+                at: CGPoint(x: back.x - d.dx * 26, y: back.y - d.dy * 26))
+    }
+
     private func drawPill(_ gc: GraphicsContext, for o: SkyObject, size: CGSize) {
         let kind = switch o.kind {
         case .star: "Star"
@@ -262,8 +325,13 @@ struct Labels: View {
         case .sun: "Sun"
         case .satellite: "Satellite"
         }
-        var detail = String(format: "%@ · mag %.1f · %.0f° up, %@", kind, o.magnitude, o.horizontal.altitude,
-                            compassPoint(o.horizontal.azimuth))
+        let mag = o.magnitude.isNaN ? "" : String(format: " · mag %.1f", o.magnitude)
+        let where_ = o.horizontal.altitude > 0
+            ? String(format: "%.0f° up, %@", o.horizontal.altitude, compassPoint(o.horizontal.azimuth))
+            : "below the horizon, " + compassPoint(o.horizontal.azimuth)
+        // satellites' own detail already says how bright (or that they're in shadow)
+        let head = o.detail.map { o.kind == .satellite ? $0 : $0 + mag } ?? (kind + mag)
+        var detail = head + " · " + where_
         if let r = o.rangeKm { detail += String(format: " · %.0f km away", r) }
         let title = gc.resolve(Text(o.name).font(.system(size: 17, weight: .semibold)).foregroundStyle(.white))
         let sub = gc.resolve(Text(detail).font(.system(size: 12)).foregroundStyle(.white.opacity(0.7)))

@@ -24,6 +24,12 @@ final class SkyModel {
     var satelliteCount = 0
 
     var pointing: Bool { camera.attitude != nil }
+
+    /// What search picked; ringed on the sky, arrowed when off screen.
+    var target: Target?
+    /// While set (drag mode), the camera keeps the target centred; a drag lets go.
+    @ObservationIgnored private var following = false
+    @ObservationIgnored private var flight: (from: Camera, start: Date)?
     var canPoint: Bool { motion.available }
 
     enum LocationSource: Equatable {
@@ -46,6 +52,7 @@ final class SkyModel {
             self.satellites.setCatalog(cat)
             self.satellitesFetched = at
             self.satelliteCount = cat.satellites.count
+            self.applySelectArgument()
         }
         feed.start()
     }
@@ -95,8 +102,43 @@ final class SkyModel {
         }
     }
 
+    func select(_ t: Target) {
+        target = t
+        following = true
+        flight = (camera, Date())
+    }
+
+    func clearTarget() {
+        target = nil
+        following = false
+        flight = nil
+    }
+
+    /// Called once per drawn frame: flies toward, then follows, the target.
+    func tick(_ date: Date) {
+        guard following, !pointing, let t = target, let r = resolve(t, at: date) else { return }
+        let dest = r.horizontal
+        guard let (from, start) = flight else {
+            camera.azimuth = dest.azimuth
+            camera.altitude = max(-89, min(89, dest.altitude))
+            return
+        }
+        let u = min(1, Date().timeIntervalSince(start) / 0.9)
+        let e = u * u * (3 - 2 * u)                               // smoothstep
+        let dAz = remainder(dest.azimuth - from.azimuth, 360)     // the short way round
+        var az = (from.azimuth + dAz * e).truncatingRemainder(dividingBy: 360)
+        if az < 0 { az += 360 }
+        camera.azimuth = az
+        camera.altitude = max(-89, min(89, from.altitude + (dest.altitude - from.altitude) * e))
+        if u >= 1 { flight = nil }
+    }
+
     func pan(dx: Double, dy: Double, perDegree: Double) {
         guard !pointing else { return }
+        if dx != 0 || dy != 0 {
+            following = false
+            flight = nil
+        }
         // the sky follows the finger
         camera.azimuth = (camera.azimuth - dx / perDegree).truncatingRemainder(dividingBy: 360)
         if camera.azimuth < 0 { camera.azimuth += 360 }
@@ -111,6 +153,13 @@ final class SkyModel {
 
     @ObservationIgnored private var argumentsSetPlace = false
 
+    /// `-select Jupiter` picks the first search result (satellites once their data loads).
+    private func applySelectArgument() {
+        guard target == nil, let q = UserDefaults.standard.string(forKey: "select"),
+              let t = search(q).first else { return }
+        select(t)
+    }
+
     /// `-az 270 -alt 30 -fov 80 -time 2026-10-29T02:00:00Z -lat 44.52 -lon -89.57`
     private func applyLaunchArguments() {
         let d = UserDefaults.standard
@@ -118,6 +167,7 @@ final class SkyModel {
         if d.object(forKey: "alt") != nil { camera.altitude = d.double(forKey: "alt") }
         if d.object(forKey: "fov") != nil { camera.fov = d.double(forKey: "fov") }
         if let t = d.string(forKey: "time"), let date = ISO8601DateFormatter().date(from: t) { fixedDate = date }
+        applySelectArgument()
         if d.object(forKey: "lat") != nil, d.object(forKey: "lon") != nil {
             observer = Observer(latitude: d.double(forKey: "lat"), longitude: d.double(forKey: "lon"),
                                 height: d.double(forKey: "height"))

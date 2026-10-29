@@ -92,11 +92,17 @@ final class SatelliteTracker {
     private var generation = 0                  // bumped by each sweep, so a frozen clock still sees it
     private var cache: (Date, Int, [Visible])?
 
+    private var byId: [Int: Satellite] = [:]
+
     var count: Int { lock.withLock { catalog?.satellites.count ?? 0 } }
+    var all: [Satellite] { lock.withLock { catalog?.satellites ?? [] } }
+    func satellite(id: Int) -> Satellite? { lock.withLock { byId[id] } }
 
     func setCatalog(_ c: SatelliteCatalog) {
+        let ids = Dictionary(c.satellites.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         lock.withLock {
             catalog = c
+            byId = ids
             lastSweep = nil
         }
     }
