@@ -9,12 +9,17 @@ struct SkyView: View {
     @State private var lastZoom: CGFloat = 1
     // `-search jup` opens the panel with a query (screenshots)
     @State private var searching = UserDefaults.standard.string(forKey: "search") != nil
+    // `-tonight YES` opens Visible tonight (screenshots)
+    @State private var tonight = UserDefaults.standard.bool(forKey: "tonight")
 
     var body: some View {
         ZStack {
             sky
             if searching {
                 SearchPanel(model: model, open: $searching)
+            }
+            if tonight {
+                TonightPanel(model: model, open: $tonight)
             }
         }
         .ignoresSafeArea(.container)
@@ -42,6 +47,7 @@ struct SkyView: View {
                     Spacer()
                     HStack {
                         SearchButton(open: $searching)
+                        TonightButton(open: $tonight)
                         if model.target != nil {
                             Button { model.clearTarget() } label: {
                                 Label("Clear", systemImage: "scope").font(.system(size: 13, weight: .semibold))

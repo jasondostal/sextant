@@ -11,8 +11,9 @@ struct SkyApp: App {
                 #endif
         }
         #if os(macOS)
-        // an iPhone 15 Pro in landscape, at half size
-        .defaultSize(width: 926, height: 427)
+        // an iPhone 15 Pro Max in landscape at half size; `-portrait YES` stands it up
+        .defaultSize(width: UserDefaults.standard.bool(forKey: "portrait") ? 430 : 926,
+                     height: UserDefaults.standard.bool(forKey: "portrait") ? 932 : 427)
         #endif
     }
 }

@@ -166,6 +166,9 @@ struct SearchPanel: View {
         .background(Color(red: 0.01, green: 0.02, blue: 0.14).opacity(0.94), in: RoundedRectangle(cornerRadius: 20))
         .overlay(RoundedRectangle(cornerRadius: 20).stroke(.white.opacity(0.12)))
         .padding(.horizontal, 16).padding(.vertical, 12)
+        #if os(macOS)
+        .padding(.top, 28)        // clear the title bar
+        #endif
         .onAppear { focused = true }
     }
 
@@ -219,6 +222,23 @@ struct SearchButton: View {
     var body: some View {
         Button { open = true } label: {
             Image(systemName: "magnifyingglass")
+                .font(.system(size: 18, weight: .semibold))
+                .frame(width: 44, height: 44)
+                .background(Circle().fill(Color(red: 0.05, green: 0.09, blue: 0.20).opacity(0.82)))
+                .overlay(Circle().stroke(.white.opacity(0.18)))
+                .foregroundStyle(.white)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Visible tonight, next to search.
+struct TonightButton: View {
+    @Binding var open: Bool
+
+    var body: some View {
+        Button { open = true } label: {
+            Image(systemName: "moon.stars")
                 .font(.system(size: 18, weight: .semibold))
                 .frame(width: 44, height: 44)
                 .background(Circle().fill(Color(red: 0.05, green: 0.09, blue: 0.20).opacity(0.82)))

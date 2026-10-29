@@ -14,6 +14,8 @@ public enum Almanac {
         public var sets: [Event] = []
         /// Highest points (upper transits for stars and planets).
         public var peaks: [Event] = []
+
+        public init() {}
     }
 
     /// Where the centre is when the edge touches a flat horizon, refraction included:
