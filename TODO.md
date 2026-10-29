@@ -3,6 +3,7 @@
 ## Needs the phone
 - [x] Point mode on a real device: both landscape sides verified 2026-10-28.
 - [ ] Point mode in portrait (mapping added, untested).
+- [ ] Point-mode guide arrow (Star Walk style, turn-direction) on the device: find the ISS with it.
 - [ ] Gesture feel (inertia on drag), 60 fps check, battery.
 
 ## Phase 1 polish (vs Star Walk 2)
@@ -10,7 +11,11 @@
 - [x] Named deep-sky objects (21), searchable; Milky Way texture registered (was 3.7° off).
 - [ ] Ground: lighter blue-grey landscape, not near-black.
 - [x] Search; tap to select. [ ] Detail card beyond the pill.
-- [ ] Time scrub (drag the clock), so it's not only "now".
+- [x] Time travel: tap the clock, pick day/hour/minute, drag the edge ruler (20 pt/unit); days are calendar days.
+- [ ] Visible Tonight (Jason's favourite Star Walk screen): date stepper, altitude chart, verdict, Show on map, grid; visible-pass list for satellites.
+- [ ] Detail card like Star Walk's Sky Live card: rise/transit/set with azimuths, altitude chart, Figures.
+- [ ] Constellation lines only for the target's constellation; ground fades when flying below the horizon; ecliptic; Night Mode.
+- [ ] Default FOV: Star Walk's point mode is ~88° wide, ours 75° (check if Jason had zoomed).
 
 ## Satellites
 - [x] CelesTrak on device, SATCAT magnitudes bundled, SGP4 gated vs Skyfield (0.25′).

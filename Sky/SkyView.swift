@@ -26,11 +26,19 @@ struct SkyView: View {
             ZStack {
                 MetalSky(model: model)
                 TimelineView(.animation) { timeline in
-                    Labels(model: model, date: model.fixedDate ?? timeline.date)
+                    Labels(model: model, date: model.date(at: timeline.date))
                 }
                 .allowsHitTesting(false)
+                if model.timeBarOpen {
+                    HStack {
+                        Spacer()
+                        TimeRuler(model: model).frame(height: geo.size.height * 0.5)
+                    }
+                    .padding(.trailing, 4)
+                }
                 VStack {
                     Readout(model: model)
+                    if model.timeBarOpen { TimeBar(model: model).padding(.top, 6) }
                     Spacer()
                     HStack {
                         SearchButton(open: $searching)
@@ -229,10 +237,11 @@ struct Labels: View {
             let frame = model.frame(at: date)
             let visible = model.objects(at: date, proj: proj)
             #if os(macOS)
-            let topBand: CGFloat = 70          // title bar + readout
+            var topBand: CGFloat = 70          // title bar + readout
             #else
-            let topBand: CGFloat = 40          // readout
+            var topBand: CGFloat = 40          // readout
             #endif
+            if model.timeBarOpen { topBand += 48 }
 
             if case .satellite(let id)? = model.target { drawTrack(gc, satellite: id, proj: proj, size: size) }
 
@@ -304,18 +313,19 @@ struct Labels: View {
             if let t = model.target, let r = model.resolve(t, at: date) {
                 let v = SIMD3<Float>(r.horizontal.vector)
                 let ring = Color(red: 0.31, green: 0.80, blue: 0.81)
-                if let p = proj.point(v), p.x > 0, p.x < size.width, p.y > 0, p.y < size.height {
+                let onScreen = proj.point(v).flatMap { p in
+                    p.x > 0 && p.x < size.width && p.y > 0 && p.y < size.height ? p : nil
+                }
+                if let p = onScreen {
                     gc.stroke(Path(ellipseIn: CGRect(x: p.x - 20, y: p.y - 20, width: 40, height: 40)),
                               with: .color(ring), lineWidth: 2)
-                    // a selected target owns the pill while it's on screen
-                    do {
-                        picked = SkyObject(name: r.name, kind: r.kind ?? .star, magnitude: r.magnitude ?? .nan,
-                                           horizontal: r.horizontal, screen: p, hidden: r.horizontal.altitude < 0,
-                                           rangeKm: r.rangeKm, detail: r.detail)
-                    }
                 } else {
-                    drawArrow(gc, toward: v, camera: cam, size: size, label: r.name, color: ring)
+                    drawArrow(gc, toward: v, camera: cam, size: size, label: r.name, color: ring, pointing: model.pointing)
                 }
+                // a selected target owns the pill, on screen or not (it says where to look)
+                picked = SkyObject(name: r.name, kind: r.kind ?? .star, magnitude: r.magnitude ?? .nan,
+                                   horizontal: r.horizontal, screen: onScreen ?? c, hidden: r.horizontal.altitude < 0,
+                                   rangeKm: r.rangeKm, detail: r.detail)
             }
             if let hit = picked { drawPill(gc, for: hit, size: size) }
         }
@@ -363,29 +373,54 @@ struct Labels: View {
         }
     }
 
-    /// An arrow at the edge of the screen pointing the way to turn.
+    /// Which way to turn to find the target. Dragging: an arrow at the screen
+    /// edge with the name. Pointing: Star Walk's arrowhead, 150 pt out from the
+    /// centre where your eyes are while you sweep the phone around.
     private func drawArrow(_ gc: GraphicsContext, toward v: SIMD3<Float>, camera: Camera, size: CGSize,
-                           label: String, color: Color) {
-        let (r, u, _) = camera.basis
-        var d = CGVector(dx: CGFloat(simd_dot(v, r)), dy: -CGFloat(simd_dot(v, u)))
+                           label: String, color: Color, pointing: Bool) {
+        let (r, u, f) = camera.basis
+        // the way a person turns, not the great circle: something behind you and
+        // low means "turn round", not "tip back over the zenith"
+        let here = Horizontal(vector: SIMD3<Double>(f)), there = Horizontal(vector: SIMD3<Double>(v))
+        func step(_ dAlt: Double, _ dAz: Double) -> SIMD3<Float> {
+            SIMD3<Float>(Horizontal(altitude: here.altitude + dAlt, azimuth: here.azimuth + dAz).vector) - f
+        }
+        let dAz = remainder(there.azimuth - here.azimuth, 360) * cos(here.altitude * .pi / 180)
+        let dAlt = there.altitude - here.altitude
+        let turn = simd_normalize(step(0, 0.01)) * Float(dAz) + simd_normalize(step(0.01, 0)) * Float(dAlt)
+        var d = CGVector(dx: CGFloat(simd_dot(turn, r)), dy: -CGFloat(simd_dot(turn, u)))
         let len = hypot(d.dx, d.dy)
         guard len > 1e-4 else { return }
         d = CGVector(dx: d.dx / len, dy: d.dy / len)
         let c = CGPoint(x: size.width / 2, y: size.height / 2)
+        let side = CGVector(dx: -d.dy, dy: d.dx)
+        func at(_ o: CGPoint, _ along: CGFloat, _ across: CGFloat) -> CGPoint {
+            CGPoint(x: o.x + d.dx * along + side.dx * across, y: o.y + d.dy * along + side.dy * across)
+        }
+        if pointing {
+            // measured from Jason's Star Walk screenshots: ~35 pt, light blue, notched
+            let tip = at(c, min(150, min(size.width, size.height) / 2 - 80), 0)   // clear of the pill
+            var a = Path()
+            a.move(to: tip)
+            a.addLine(to: at(tip, -30, 17))
+            a.addLine(to: at(tip, -19, 0))
+            a.addLine(to: at(tip, -30, -17))
+            a.closeSubpath()
+            gc.fill(a, with: .color(Color(red: 0.67, green: 0.78, blue: 1.0)))
+            return
+        }
         // where the ray from the centre leaves an inset rectangle
         let hw = size.width / 2 - 70, hh = size.height / 2 - 60
         let t = min(abs(d.dx) > 1e-4 ? hw / abs(d.dx) : .infinity, abs(d.dy) > 1e-4 ? hh / abs(d.dy) : .infinity)
-        let tip = CGPoint(x: c.x + d.dx * t, y: c.y + d.dy * t)
-        let back = CGPoint(x: tip.x - d.dx * 22, y: tip.y - d.dy * 22)
-        let side = CGVector(dx: -d.dy * 11, dy: d.dx * 11)
+        let tip = at(c, t, 0)
+        let back = at(tip, -22, 0)
         var a = Path()
         a.move(to: tip)
-        a.addLine(to: CGPoint(x: back.x + side.dx, y: back.y + side.dy))
-        a.addLine(to: CGPoint(x: back.x - side.dx, y: back.y - side.dy))
+        a.addLine(to: at(back, 0, 11))
+        a.addLine(to: at(back, 0, -11))
         a.closeSubpath()
         gc.fill(a, with: .color(color))
-        gc.draw(Text(label).font(.system(size: 13, weight: .semibold)).foregroundStyle(color),
-                at: CGPoint(x: back.x - d.dx * 26, y: back.y - d.dy * 26))
+        gc.draw(Text(label).font(.system(size: 13, weight: .semibold)).foregroundStyle(color), at: at(back, -26, 0))
     }
 
     private func drawPill(_ gc: GraphicsContext, for o: SkyObject, size: CGSize) {
@@ -435,8 +470,12 @@ struct Readout: View {
         TimelineView(.periodic(from: .now, by: 1)) { t in
             HStack(spacing: 14) {
                 place
-                Text(timeText(model.fixedDate ?? t.date))
-                    .foregroundStyle(model.fixedDate == nil ? .white.opacity(0.75) : Self.amber)
+                Button { model.timeBarOpen.toggle() } label: {
+                    Label(timeText(model.date(at: t.date)), systemImage: "clock")
+                        .foregroundStyle(model.timeTraveling ? Self.amber : .white.opacity(0.75))
+                }
+                .buttonStyle(.plain)
+                .focusEffectDisabled()
                 Spacer()
                 satellites(t.date)
                 Text(String(format: "%.0f° FOV", model.camera.fov)).foregroundStyle(.white.opacity(0.5))
@@ -447,7 +486,9 @@ struct Readout: View {
 
     /// Orbit data age: amber after 3 days, when predictions start drifting.
     @ViewBuilder private func satellites(_ now: Date) -> some View {
-        if let at = model.satellitesFetched {
+        if model.satellitesFetched != nil, !model.satellitesValid(at: model.date(at: now)) {
+            Text("sats hidden · orbits don't reach this date").foregroundStyle(Self.amber)
+        } else if let at = model.satellitesFetched {
             let hours = now.timeIntervalSince(at) / 3600
             Text("\(model.satelliteCount) sats · " + (hours < 1 ? "fresh" : hours < 48 ? "\(Int(hours)) h old" : "\(Int(hours / 24)) d old"))
                 .foregroundStyle(hours > 72 ? Self.amber : .white.opacity(0.5))
@@ -470,7 +511,7 @@ struct Readout: View {
 
     private func timeText(_ d: Date) -> String {
         let f = DateFormatter()
-        f.dateFormat = model.fixedDate == nil ? "HH:mm" : "yyyy-MM-dd HH:mm zzz"
-        return model.fixedDate == nil ? f.string(from: d) : "Frozen " + f.string(from: d)
+        f.dateFormat = model.timeTraveling ? "yyyy-MM-dd HH:mm zzz" : "HH:mm"
+        return (model.fixedDate != nil && model.timeOffset == 0 ? "Frozen " : "") + f.string(from: d)
     }
 }

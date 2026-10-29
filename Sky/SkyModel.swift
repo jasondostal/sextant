@@ -13,6 +13,10 @@ final class SkyModel {
     var location: LocationSource = .fallback("Stevens Point")
     /// Nil = live; otherwise the sky is frozen at this instant.
     var fixedDate: Date?
+    /// Time travel: how far the sky runs ahead of (or behind) the clock. It keeps ticking.
+    var timeOffset: TimeInterval = 0
+    var timeBarOpen = UserDefaults.standard.bool(forKey: "timebar")
+    var timeUnit: TimeUnit = .hour
 
     @ObservationIgnored private var bodyCache: (Date, Observer, [BodyPosition])?
     @ObservationIgnored private let locator = Locator()
@@ -57,7 +61,35 @@ final class SkyModel {
         feed.start()
     }
 
-    var now: Date { fixedDate ?? Date() }
+    var now: Date { date(at: Date()) }
+
+    /// The sky's time when the wall clock reads `wall`.
+    func date(at wall: Date) -> Date { fixedDate ?? wall.addingTimeInterval(timeOffset) }
+
+    var timeTraveling: Bool { fixedDate != nil || timeOffset != 0 }
+
+    func shiftTime(by s: TimeInterval) {
+        if let d = fixedDate { fixedDate = d.addingTimeInterval(s) } else { timeOffset += s }
+    }
+
+    /// Calendar days, so the clock time stays put across a daylight-saving change.
+    func shiftDays(_ n: Int) {
+        let t = now
+        guard let later = Calendar.current.date(byAdding: .day, value: n, to: t) else { return }
+        shiftTime(by: later.timeIntervalSince(t))
+    }
+
+    func resetTime() {
+        fixedDate = nil
+        timeOffset = 0
+    }
+
+    /// Orbits are good for a week or two either side of their epoch; past that
+    /// the satellites would be drawn in made-up places.
+    func satellitesValid(at date: Date) -> Bool {
+        guard let at = satellitesFetched else { return false }
+        return abs(date.timeIntervalSince(at)) < 14 * 86400
+    }
 
     func frame(at date: Date) -> SkyFrame { SkyFrame(date: date, observer: observer) }
 
@@ -77,7 +109,7 @@ final class SkyModel {
     /// and bright enough for the zoom.
     func visibleSatellites(at date: Date) -> [SatelliteTracker.Visible] {
         guard let sun = bodies(at: date).first(where: { $0.body == .sun }),
-              sun.geometric.altitude < -3 else { return [] }
+              sun.geometric.altitude < -3, satellitesValid(at: date) else { return [] }
         let limit = min(7.5, starLimit(fov: camera.fov) - 1.0)
         return satellites.positions(at: date, observer: observer)
             .filter { $0.position.sunlit && $0.position.magnitude <= limit }
@@ -162,12 +194,20 @@ final class SkyModel {
     }
 
     /// `-az 270 -alt 30 -fov 80 -time 2026-10-29T02:00:00Z -lat 44.52 -lon -89.57`
+    /// (`-offsetHours 8.5` runs live but shifted; `-timebar YES` opens time travel;
+    /// `-frozenPoint YES` draws point mode held still at -az/-alt)
     private func applyLaunchArguments() {
         let d = UserDefaults.standard
         if d.object(forKey: "az") != nil { camera.azimuth = d.double(forKey: "az") }
         if d.object(forKey: "alt") != nil { camera.altitude = d.double(forKey: "alt") }
         if d.object(forKey: "fov") != nil { camera.fov = d.double(forKey: "fov") }
+        // pretend the phone is held still at -az/-alt: point mode's look without the sensors
+        if d.bool(forKey: "frozenPoint") {
+            let b = camera.basis
+            camera.attitude = Camera.Basis(right: b.right, up: b.up, forward: b.forward)
+        }
         if let t = d.string(forKey: "time"), let date = ISO8601DateFormatter().date(from: t) { fixedDate = date }
+        if d.object(forKey: "offsetHours") != nil { timeOffset = d.double(forKey: "offsetHours") * 3600 }
         applySelectArgument()
         if d.object(forKey: "lat") != nil, d.object(forKey: "lon") != nil {
             observer = Observer(latitude: d.double(forKey: "lat"), longitude: d.double(forKey: "lon"),
