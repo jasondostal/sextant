@@ -9,6 +9,7 @@ enum Target: Hashable {
     case body(Body)
     case constellation(Int)
     case satellite(Int)
+    case deepSky(Int)
 }
 
 struct Resolved {
@@ -41,6 +42,10 @@ extension SkyModel {
             let c = sky.constellations[i]
             let h = Horizontal(vector: frame(at: date).eqjToHor * SIMD3<Double>(c.direction))
             return Resolved(name: c.name, kind: nil, horizontal: h, magnitude: nil, rangeKm: nil, detail: "Constellation")
+        case .deepSky(let i):
+            let d = DeepSkyObject.all[i]
+            return Resolved(name: d.name, kind: .deepSky, horizontal: apparent(frame(at: date).horizontal(star: d.direction).vector),
+                            magnitude: d.magnitude, rangeKm: nil, detail: d.kind + " · " + d.designation)
         case .satellite(let id):
             guard let s = satellites.satellite(id: id),
                   let p = SatelliteFrame(date: date, observer: observer).position(of: s) else { return nil }
@@ -62,6 +67,7 @@ extension SkyModel {
         }
         for b in Body.allCases { rank(b.rawValue, 0, .body(b)) }
         for (i, c) in sky.constellations.enumerated() { rank(c.name, 10, .constellation(i)) }
+        for (i, d) in DeepSkyObject.all.enumerated() { rank(d.name + " " + d.designation, 15, .deepSky(i)) }
         for (i, n) in sky.catalog.names.sorted(by: { $0.key < $1.key }) { rank(n, 20, .star(i)) }
         let numeric = q.allSatisfy(\.isNumber)
         for s in satellites.all {
@@ -82,6 +88,7 @@ extension SkyModel {
             .map { .body($0) }
         t += [25544, 48274, 20580].filter { satellites.satellite(id: $0) != nil }.map { .satellite($0) }
         t += sky.catalog.names.keys.sorted().prefix(12).map { .star($0) }
+        t += DeepSkyObject.all.indices.filter { DeepSkyObject.all[$0].magnitude < 4 }.map { .deepSky($0) }
         return t.sorted { (resolve($0, at: date)?.horizontal.altitude ?? -90 > 0 ? 0 : 1) <
                           (resolve($1, at: date)?.horizontal.altitude ?? -90 > 0 ? 0 : 1) }
     }
@@ -149,6 +156,7 @@ struct SearchPanel: View {
         case .satellite?: Color(red: 0.31, green: 0.80, blue: 0.81)
         case .planet?: Color(red: 0.90, green: 0.60, blue: 0.60)
         case .star?: Color(red: 0.93, green: 0.91, blue: 0.78)
+        case .deepSky?: Color(red: 0.74, green: 0.66, blue: 0.95)
         default: .white
         }
         return HStack {

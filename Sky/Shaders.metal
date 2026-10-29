@@ -22,10 +22,11 @@ struct StarGPU {
     float bv;
 };
 
-struct GlowGPU {            // bodies and Milky Way blobs, already in the horizon frame
+struct GlowGPU {            // bodies and satellites, in the horizon frame; 48 bytes
     packed_float3 dir;
     float radiusPx;
     packed_float4 color;
+    packed_float4 phase;    // Moon only: screen direction to the Sun (x, y), cos(phase angle), 1 = apply
 };
 
 struct SpriteOut {
@@ -33,6 +34,7 @@ struct SpriteOut {
     float2 uv;
     float4 color;
     float sharpness;
+    float4 phase;
 };
 
 // --- shared helpers ---------------------------------------------------------
@@ -215,6 +217,7 @@ vertex SpriteOut glowVertex(uint vid [[vertex_id]], uint iid [[instance_id]],
     o.uv = c;
     o.color = float4(g.color) * (catalogFrame ? u.darkness : 1.0);
     o.sharpness = catalogFrame ? 0.0 : 1.0;
+    o.phase = float4(g.phase);
     return o;
 }
 
@@ -223,6 +226,19 @@ fragment float4 glowFragment(SpriteOut in [[stage_in]]) {
     if (r2 > 1.0) discard_fragment();
     // bodies: a crisp disc with a soft rim; Milky Way: a broad gaussian
     float disc = in.sharpness > 0.5 ? (1.0 - smoothstep(0.30, 0.42, r2)) + 0.35 * exp(-r2 * 3.0) : exp(-r2 * 3.0);
+    if (in.phase.w > 0.5) {
+        // the Moon: lit where x (toward the Sun) clears the terminator ellipse,
+        // x > −cos(i)·√(1−y²); a faint earthshine on the rest, mild limb darkening
+        float2 p = in.uv / 0.6;
+        float rr = dot(p, p);
+        float2 sunward = normalize(in.phase.xy + 1e-5);
+        float x = dot(p, sunward), y = dot(p, float2(-sunward.y, sunward.x));
+        float edge = -in.phase.z * sqrt(max(0.0, 1.0 - y * y));
+        float lit = smoothstep(edge - 0.04, edge + 0.04, x);
+        float body = (1.0 - smoothstep(0.92, 1.05, rr)) * (0.78 + 0.22 * sqrt(max(0.0, 1.0 - rr)));
+        float glow = 0.25 * exp(-r2 * 3.0) * (1.0 + in.phase.z) / 2.0;   // halo ∝ lit fraction
+        return in.color * (body * mix(0.07, 1.0, lit) + glow);
+    }
     return in.color * disc;
 }
 

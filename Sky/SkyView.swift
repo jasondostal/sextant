@@ -65,6 +65,18 @@ struct SkyView: View {
                         model.pan(dx: d.width, dy: d.height, perDegree: model.camera.perDegree(geo.size))
                     }
                     .onEnded { _ in lastDrag = .zero }
+                    .simultaneously(with: SpatialTapGesture()
+                        .onEnded { tap in
+                            // the nearest named thing within a fingertip
+                            let proj = Projector(camera: model.camera, size: geo.size)
+                            let hit = model.objects(at: model.now, proj: proj)
+                                .filter { $0.target != nil }
+                                .min { hypot($0.screen.x - tap.location.x, $0.screen.y - tap.location.y) <
+                                       hypot($1.screen.x - tap.location.x, $1.screen.y - tap.location.y) }
+                            if let h = hit, hypot(h.screen.x - tap.location.x, h.screen.y - tap.location.y) < 30 {
+                                model.select(h.target!, fly: false)
+                            }
+                        })
                     .simultaneously(with: MagnifyGesture()
                         .onChanged { g in
                             model.zoom(by: g.magnification / lastZoom)
@@ -138,7 +150,7 @@ func terrainHeight(azimuthRadians az: Double) -> Double {
 }
 
 struct SkyObject {
-    enum Kind { case star, planet, moon, sun, satellite }
+    enum Kind { case star, planet, moon, sun, satellite, deepSky }
     let name: String
     let kind: Kind
     let magnitude: Double
@@ -149,6 +161,51 @@ struct SkyObject {
     var rangeKm: Double? = nil
     /// Overrides the pill's kind line (search targets carry their own).
     var detail: String? = nil
+    /// What tapping it selects.
+    var target: Target? = nil
+}
+
+func aboveLand(_ h: Horizontal) -> Bool {
+    h.altitude > terrainHeight(azimuthRadians: h.azimuth * .pi / 180)
+}
+
+extension SkyModel {
+    /// Named things in view, brightest first: what gets labels, the pill, and taps.
+    func objects(at date: Date, proj: Projector) -> [SkyObject] {
+        let frame = frame(at: date)
+        var out: [SkyObject] = []
+        for b in bodies(at: date) {
+            let h = SIMD3<Float>(b.geometric.vector)
+            guard let p = proj.point(refractHorizon(h)) else { continue }
+            let kind: SkyObject.Kind = b.body == .sun ? .sun : b.body == .moon ? .moon : .planet
+            out.append(SkyObject(name: b.body.rawValue, kind: kind, magnitude: b.magnitude,
+                                 horizontal: b.apparent, screen: p, hidden: !aboveLand(b.apparent), target: .body(b.body)))
+        }
+        let cat = sky.catalog
+        for (i, name) in cat.names {
+            let s = cat.stars[i]
+            let geo = frame.horizontal(star: SIMD3<Double>(s.direction))
+            let app = Horizontal(vector: SIMD3<Double>(refractHorizon(SIMD3<Float>(geo.vector))))
+            guard let p = proj.point(SIMD3<Float>(app.vector)) else { continue }
+            out.append(SkyObject(name: name, kind: .star, magnitude: Double(s.magnitude), horizontal: app,
+                                 screen: p, hidden: !aboveLand(app), target: .star(i)))
+        }
+        for (i, d) in DeepSkyObject.all.enumerated() {
+            let app = Horizontal(vector: SIMD3<Double>(refractHorizon(SIMD3<Float>(frame.horizontal(star: d.direction).vector))))
+            guard let p = proj.point(SIMD3<Float>(app.vector)) else { continue }
+            out.append(SkyObject(name: d.name, kind: .deepSky, magnitude: d.magnitude, horizontal: app, screen: p,
+                                 hidden: !aboveLand(app), detail: d.kind + " · " + d.designation, target: .deepSky(i)))
+        }
+        for v in visibleSatellites(at: date) {
+            let geo = SIMD3<Float>(v.position.horizontal.vector)
+            let app = Horizontal(vector: SIMD3<Double>(refractHorizon(geo)))
+            guard aboveLand(app), let p = proj.point(refractHorizon(geo)) else { continue }
+            out.append(SkyObject(name: Labels.displayName(v.satellite.name), kind: .satellite,
+                                 magnitude: v.position.magnitude, horizontal: app, screen: p, hidden: false,
+                                 rangeKm: v.position.rangeKm, target: .satellite(v.satellite.id)))
+        }
+        return out.sorted { $0.magnitude < $1.magnitude }
+    }
 }
 
 // Star Walk 2's label colours, measured from Jason's screenshots.
@@ -159,6 +216,7 @@ private let sunName = Color(red: 0.82, green: 0.82, blue: 0.32)
 private let moonName = Color(red: 0.85, green: 0.86, blue: 0.88)
 private let constellationName = Color(red: 0.72, green: 0.74, blue: 0.80)
 private let satelliteName = Color(red: 0.31, green: 0.80, blue: 0.81)
+private let deepSkyName = Color(red: 0.74, green: 0.66, blue: 0.95)
 
 struct Labels: View {
     let model: SkyModel
@@ -169,7 +227,14 @@ struct Labels: View {
             let cam = model.camera
             let proj = Projector(camera: cam, size: size)
             let frame = model.frame(at: date)
-            let visible = visibleObjects(frame: frame, proj: proj)
+            let visible = model.objects(at: date, proj: proj)
+            #if os(macOS)
+            let topBand: CGFloat = 70          // title bar + readout
+            #else
+            let topBand: CGFloat = 40          // readout
+            #endif
+
+            if case .satellite(let id)? = model.target { drawTrack(gc, satellite: id, proj: proj, size: size) }
 
             // constellation names: only the major ones when zoomed out
             let maxRank = cam.fov > 70 ? 1 : cam.fov > 35 ? 2 : 3
@@ -177,6 +242,7 @@ struct Labels: View {
                 let h = frame.eqjToHor * SIMD3<Double>(c.direction)
                 guard let p = proj.point(SIMD3<Float>(h)) else { continue }
                 let dim = (c.rank == 1 ? 0.85 : 0.6) * (aboveLand(Horizontal(vector: h)) ? 1 : 0.35)
+                guard p.y > topBand + 10 else { continue }
                 gc.draw(Text(c.name.uppercased()).font(.system(size: 15, weight: .regular)).tracking(0.6)
                     .foregroundStyle(constellationName.opacity(dim)), at: p)
             }
@@ -186,13 +252,21 @@ struct Labels: View {
             let nameLimit = min(5.0, 2.4 + 2.0 * log2(max(1, 75 / cam.fov)))
             let satNameLimit = min(6.5, 5.0 + 2.0 * log2(max(1, 75 / cam.fov)))
             for o in visible where (o.kind != .star || o.magnitude <= nameLimit)
-                && (o.kind != .satellite || o.magnitude <= satNameLimit) {
+                && (o.kind != .satellite || o.magnitude <= satNameLimit)
+                && (o.kind != .deepSky || cam.fov < 100) {
                 let color = switch o.kind {
                 case .star: o.magnitude < 1 ? brightStarName : starName
                 case .planet: planetName
                 case .sun: sunName
                 case .moon: moonName
                 case .satellite: satelliteName
+                case .deepSky: deepSkyName
+                }
+                if o.kind == .deepSky {
+                    // a soft marker: these are smudges, not points
+                    gc.stroke(Path(ellipseIn: CGRect(x: o.screen.x - 7, y: o.screen.y - 7, width: 14, height: 14)),
+                              with: .color(deepSkyName.opacity(o.hidden ? 0.25 : 0.55)),
+                              style: StrokeStyle(lineWidth: 1, dash: [2.5, 2.5]))
                 }
                 let text = Text(o.name).font(.system(size: 15, weight: .regular))
                     .foregroundStyle(color.opacity(o.hidden ? 0.45 : 1))
@@ -201,7 +275,7 @@ struct Labels: View {
                 // centred under the object, as Star Walk does
                 let below: CGFloat = o.kind == .sun || o.kind == .moon ? 22 : 10
                 let rect = CGRect(x: o.screen.x - s.width / 2, y: o.screen.y + below, width: s.width, height: s.height)
-                if taken.contains(where: { $0.intersects(rect.insetBy(dx: -3, dy: -1)) }) { continue }
+                if rect.minY < topBand || taken.contains(where: { $0.intersects(rect.insetBy(dx: -3, dy: -1)) }) { continue }
                 taken.append(rect)
                 gc.draw(resolved, in: rect)
             }
@@ -233,7 +307,8 @@ struct Labels: View {
                 if let p = proj.point(v), p.x > 0, p.x < size.width, p.y > 0, p.y < size.height {
                     gc.stroke(Path(ellipseIn: CGRect(x: p.x - 20, y: p.y - 20, width: 40, height: 40)),
                               with: .color(ring), lineWidth: 2)
-                    if dist(p, c) < pickRadius {
+                    // a selected target owns the pill while it's on screen
+                    do {
                         picked = SkyObject(name: r.name, kind: r.kind ?? .star, magnitude: r.magnitude ?? .nan,
                                            horizontal: r.horizontal, screen: p, hidden: r.horizontal.altitude < 0,
                                            rangeKm: r.rangeKm, detail: r.detail)
@@ -246,40 +321,36 @@ struct Labels: View {
         }
     }
 
-    private func aboveLand(_ h: Horizontal) -> Bool {
-        h.altitude > terrainHeight(azimuthRadians: h.azimuth * .pi / 180)
-    }
-
     private func dist(_ a: CGPoint, _ b: CGPoint) -> CGFloat { hypot(a.x - b.x, a.y - b.y) }
 
-    /// Named things in view, brightest first.
-    private func visibleObjects(frame: SkyFrame, proj: Projector) -> [SkyObject] {
-        var out: [SkyObject] = []
-        for b in model.bodies(at: date) {
-            let h = SIMD3<Float>(b.geometric.vector)
-            guard let p = proj.point(refractHorizon(h)) else { continue }
-            let kind: SkyObject.Kind = b.body == .sun ? .sun : b.body == .moon ? .moon : .planet
-            out.append(SkyObject(name: b.body.rawValue, kind: kind, magnitude: b.magnitude,
-                                 horizontal: b.apparent, screen: p, hidden: !aboveLand(b.apparent)))
+    /// A selected satellite's path across the sky this pass: ±12 minutes,
+    /// above the horizon, ticked every 30 s with the time each minute.
+    private func drawTrack(_ gc: GraphicsContext, satellite id: Int, proj: Projector, size: CGSize) {
+        guard let sat = model.satellites.satellite(id: id) else { return }
+        let color = Color(red: 0.31, green: 0.80, blue: 0.81)
+        var path = Path(), drawing = false
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        for step in stride(from: -720, through: 720, by: 15) {
+            let t = date.addingTimeInterval(Double(step))
+            guard let p = SatelliteFrame(date: t, observer: model.observer).position(of: sat),
+                  p.horizontal.altitude > -0.5,
+                  let pt = proj.point(refractHorizon(SIMD3<Float>(p.horizontal.vector))) else {
+                drawing = false
+                continue
+            }
+            if drawing { path.addLine(to: pt) } else { path.move(to: pt); drawing = true }
+            // a LEO satellite crosses ~30° of sky a minute: dots every 30 s, times every minute
+            if step % 30 == 0 && step != 0 {
+                gc.fill(Path(ellipseIn: CGRect(x: pt.x - 2.5, y: pt.y - 2.5, width: 5, height: 5)),
+                        with: .color(color.opacity(0.8)))
+            }
+            if step % 60 == 0 && step != 0 {
+                gc.draw(Text(f.string(from: t)).font(.system(size: 10, weight: .medium).monospacedDigit())
+                    .foregroundStyle(color.opacity(0.75)), at: CGPoint(x: pt.x + 18, y: pt.y - 8))
+            }
         }
-        let cat = model.sky.catalog
-        for (i, name) in cat.names {
-            let s = cat.stars[i]
-            let geo = frame.horizontal(star: SIMD3<Double>(s.direction))
-            let app = Horizontal(vector: SIMD3<Double>(refractHorizon(SIMD3<Float>(geo.vector))))
-            guard let p = proj.point(SIMD3<Float>(app.vector)) else { continue }
-            out.append(SkyObject(name: name, kind: .star, magnitude: Double(s.magnitude), horizontal: app,
-                                 screen: p, hidden: !aboveLand(app)))
-        }
-        for v in model.visibleSatellites(at: date) {
-            let geo = SIMD3<Float>(v.position.horizontal.vector)
-            let app = Horizontal(vector: SIMD3<Double>(refractHorizon(geo)))
-            guard aboveLand(app), let p = proj.point(refractHorizon(geo)) else { continue }
-            out.append(SkyObject(name: Self.displayName(v.satellite.name), kind: .satellite,
-                                 magnitude: v.position.magnitude, horizontal: app, screen: p, hidden: false,
-                                 rangeKm: v.position.rangeKm))
-        }
-        return out.sorted { $0.magnitude < $1.magnitude }
+        gc.stroke(path, with: .color(color.opacity(0.45)), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
     }
 
     /// CelesTrak's names, made readable: "ISS (ZARYA)" → "ISS", "CSS (TIANHE)" → "Tiangong".
@@ -324,6 +395,7 @@ struct Labels: View {
         case .moon: "Moon"
         case .sun: "Sun"
         case .satellite: "Satellite"
+        case .deepSky: "Deep sky"
         }
         let mag = o.magnitude.isNaN ? "" : String(format: " · mag %.1f", o.magnitude)
         let where_ = o.horizontal.altitude > 0

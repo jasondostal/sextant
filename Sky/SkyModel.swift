@@ -102,10 +102,11 @@ final class SkyModel {
         }
     }
 
-    func select(_ t: Target) {
+    /// `fly`: centre the view on it and follow (search); a tap just rings it where it is.
+    func select(_ t: Target, fly: Bool = true) {
         target = t
-        following = true
-        flight = (camera, Date())
+        following = fly
+        flight = fly ? (camera, Date()) : nil
     }
 
     func clearTarget() {

@@ -85,7 +85,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
         lineVertexCount = seg.count / 3
         lineBuffer = device.makeBuffer(bytes: seg, length: seg.count * 4)!
-        satBuffers = (0..<3).map { _ in device.makeBuffer(length: Self.maxSatellites * 32, options: .storageModeShared)! }
+        satBuffers = (0..<3).map { _ in device.makeBuffer(length: Self.maxSatellites * 48, options: .storageModeShared)! }
         super.init()
     }
 
@@ -120,7 +120,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             pxPerDeg: Float(cam.perDegree(size)),
             limitMag: limit, darkness: darkness, scale: scale)
 
-        var bodyGlows = Self.glows(bodies, pixelsPerDegree: cam.perDegree(size) / Double(scale))
+        var bodyGlows = Self.glows(bodies, pixelsPerDegree: cam.perDegree(size) / Double(scale), camera: cam)
         inFlight.wait()
         let satBuffer = satBuffers[satFrame % 3]
         satFrame += 1
@@ -165,11 +165,19 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     /// Bodies are already topocentric and in the horizon frame, so they're
     /// sent each frame as glows with a pixel radius (a few hundred bytes).
-    private static func glows(_ bodies: [BodyPosition], pixelsPerDegree: Double) -> [Float] {
-        bodies.flatMap { b -> [Float] in
+    private static func glows(_ bodies: [BodyPosition], pixelsPerDegree: Double, camera: Camera) -> [Float] {
+        let sun = SIMD3<Float>(bodies.first { $0.body == .sun }!.geometric.vector)
+        let (right, up, _) = camera.basis
+        return bodies.flatMap { b -> [Float] in
             let v = SIMD3<Float>(b.geometric.vector)
             let (radius, c) = look(b, pixelsPerDegree: pixelsPerDegree)
-            return [v.x, v.y, v.z, radius, c.x, c.y, c.z, c.w]
+            var phase: [Float] = [0, 0, 0, 0]
+            if b.body == .moon {
+                // which way the lit limb faces on screen, and how much is lit (cos i = 2k − 1)
+                let toward = sun - simd_dot(sun, v) * v
+                phase = [simd_dot(toward, right), simd_dot(toward, up), Float(2 * b.phase - 1), 1]
+            }
+            return [v.x, v.y, v.z, radius, c.x, c.y, c.z, c.w] + phase
         }
     }
 
@@ -177,16 +185,17 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// like Star Walk's. Directions are horizon-frame, so they go in as bodies do.
     private static func writeSatellites(_ sats: [SatelliteTracker.Visible], into buffer: MTLBuffer) -> Int {
         let n = min(sats.count, maxSatellites)
-        let p = buffer.contents().bindMemory(to: Float.self, capacity: n * 8)
+        let p = buffer.contents().bindMemory(to: Float.self, capacity: n * 12)
         for i in 0..<n {
             let s = sats[i].position
             let v = SIMD3<Float>(s.horizontal.vector)
             let m = Float(s.magnitude)
             let a = min(1, max(0.6, (7 - m) / 4))
-            let o = i * 8
+            let o = i * 12
             p[o] = v.x; p[o + 1] = v.y; p[o + 2] = v.z
             p[o + 3] = min(5.5, max(2.6, 4.6 - 0.45 * m))
             p[o + 4] = 0.88 * a; p[o + 5] = 0.97 * a; p[o + 6] = 1.0 * a; p[o + 7] = a
+            p[o + 8] = 0; p[o + 9] = 0; p[o + 10] = 0; p[o + 11] = 0
         }
         return n
     }
@@ -196,9 +205,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         case .sun:
             return (Float(max(14, 0.53 * pixelsPerDegree)), SIMD4(1.0, 0.92, 0.70, 1))
         case .moon:
-            // brightness follows the phase so a thin crescent doesn't blaze
-            let lit = Float(0.25 + 0.75 * b.phase)
-            return (Float(max(11, 0.52 * pixelsPerDegree)), SIMD4(0.95, 0.94, 0.88, 1) * lit)
+            // the shader draws the phase; drawn a little larger than life, like Star Walk
+            return (Float(max(17, 0.6 * pixelsPerDegree)), SIMD4(0.95, 0.94, 0.88, 1))
         default:
             let tint: SIMD3<Float> = switch b.body {
             case .mars: SIMD3(1.0, 0.62, 0.45)
