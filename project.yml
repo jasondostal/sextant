@@ -1,0 +1,62 @@
+name: Sky
+options:
+  bundleIdPrefix: dev.ducktyping
+  deploymentTarget:
+    iOS: "17.0"
+    macOS: "14.0"
+  createIntermediateGroups: true
+packages:
+  SkyCore:
+    path: SkyCore
+targets:
+  Sky:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sky
+    dependencies:
+      - package: SkyCore
+    info:
+      path: Sky/Info.plist
+      properties:
+        CFBundleDisplayName: Sky
+        NSLocationWhenInUseUsageDescription: Sky puts the stars where they are from where you're standing.
+        NSMotionUsageDescription: Sky follows your phone as you point it at the sky.
+        UILaunchScreen: {}
+        UIRequiresFullScreen: true
+        UIStatusBarHidden: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationLandscapeRight
+          - UIInterfaceOrientationLandscapeLeft
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.ducktyping.sky
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 8N87FTKWXL
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
+  # The same app in a Mac window: lets the sky be screenshotted and compared
+  # against Stellarium without a simulator or a phone.
+  SkyMac:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sky
+    dependencies:
+      - package: SkyCore
+    info:
+      path: SkyMac/Info.plist
+      properties:
+        CFBundleDisplayName: Sky
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.ducktyping.sky.mac
+        PRODUCT_NAME: Sky
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
