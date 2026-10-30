@@ -26,14 +26,39 @@ struct SettingsPanel: View {
             }
             Toggle("Ecliptic (the Sun's and planets' path)", isOn: $model.showEcliptic).font(.system(size: 13, weight: .medium))
             Toggle("Night mode (red)", isOn: $model.nightMode).font(.system(size: 13, weight: .medium))
+            DisclosureGroup("Credits") { credits }
+                .font(.system(size: 13, weight: .medium))
+                .tint(.white)
         }
         .foregroundStyle(.white)
         .padding(18)
-        .frame(maxWidth: 380)
+        .frame(maxWidth: 400)
         .background(Color(red: 0.01, green: 0.02, blue: 0.14).opacity(0.96), in: RoundedRectangle(cornerRadius: 20))
         .overlay(RoundedRectangle(cornerRadius: 20).stroke(.white.opacity(0.12)))
         .environment(\.colorScheme, .dark)
     }
+
+    /// What the licences ask for (NOTICE.md has the full texts' sources).
+    private var credits: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Self.notices, id: \.0) { name, line in
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(name).font(.system(size: 12, weight: .semibold))
+                    Text(line).font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
+                }
+            }
+        }
+        .padding(.top, 6)
+    }
+
+    static let notices: [(String, String)] = [
+        ("Astronomy Engine", "Don Cross · MIT License · positions of the Sun, Moon and planets"),
+        ("HYG star database v4.4", "David Nash (astronexus.com) · CC BY-SA 4.0 · the stars; Sextant's star file is shared under the same licence"),
+        ("Milky Way panorama", "ESO/S. Brunier (eso.org) · CC BY 4.0 · stars removed and reprojected"),
+        ("d3-celestial", "Olaf Frohn · BSD 3-Clause · constellation figures and names"),
+        ("SatelliteKit", "Gavin Eadie · MIT License · SGP4 orbit propagation"),
+        ("CelesTrak", "Dr. T.S. Kelso (celestrak.org) · satellite orbits and catalog"),
+    ]
 
     private var lineHint: String {
         switch model.lineMode {
@@ -54,5 +79,6 @@ struct SettingsButton: View {
                 .frame(width: 30, height: 24).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .focusEffectDisabled()
     }
 }

@@ -580,50 +580,64 @@ struct Readout: View {
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { t in
-            HStack(spacing: 14) {
-                place
-                Button { model.timeBarOpen.toggle() } label: {
-                    Label(timeText(model.date(at: t.date)), systemImage: "clock")
-                        .foregroundStyle(model.timeTraveling ? Self.amber : .white.opacity(0.75))
-                }
-                .buttonStyle(.plain)
-                .focusEffectDisabled()
-                Spacer()
-                satellites(t.date)
-                Text(String(format: "%.0f° FOV", model.camera.fov)).foregroundStyle(.white.opacity(0.5))
+            // the full line in landscape; portrait gets the short forms, never a wrap
+            ViewThatFits(in: .horizontal) {
+                line(t.date, compact: false)
+                line(t.date, compact: true)
             }
             .font(.system(size: 12, weight: .medium).monospacedDigit())
+            .lineLimit(1)
         }
+    }
+
+    private func line(_ now: Date, compact: Bool) -> some View {
+        HStack(spacing: compact ? 10 : 14) {
+            place(compact)
+            Button { model.timeBarOpen.toggle() } label: {
+                Label(timeText(model.date(at: now), compact: compact), systemImage: "clock")
+                    .foregroundStyle(model.timeTraveling ? Self.amber : .white.opacity(0.75))
+            }
+            .buttonStyle(.plain)
+            .focusEffectDisabled()
+            Spacer(minLength: 6)
+            satellites(now, compact)
+            if !compact {
+                Text(String(format: "%.0f° FOV", model.camera.fov)).foregroundStyle(.white.opacity(0.5))
+            }
+        }
+        .frame(maxWidth: .infinity)
     }
 
     /// Orbit data age: amber after 3 days, when predictions start drifting.
-    @ViewBuilder private func satellites(_ now: Date) -> some View {
+    @ViewBuilder private func satellites(_ now: Date, _ compact: Bool) -> some View {
         if model.satellitesFetched != nil, !model.satellitesValid(at: model.date(at: now)) {
-            Text("sats hidden · orbits don't reach this date").foregroundStyle(Self.amber)
+            Text(compact ? "sats hidden" : "sats hidden · orbits don't reach this date").foregroundStyle(Self.amber)
         } else if let at = model.satellitesFetched {
             let hours = now.timeIntervalSince(at) / 3600
-            Text("\(model.satelliteCount) sats · " + (hours < 1 ? "fresh" : hours < 48 ? "\(Int(hours)) h old" : "\(Int(hours / 24)) d old"))
+            let age = hours < 1 ? "fresh" : hours < 48 ? "\(Int(hours)) h" + (compact ? "" : " old") : "\(Int(hours / 24)) d" + (compact ? "" : " old")
+            Text((compact ? "sats · " : "\(model.satelliteCount) sats · ") + age)
                 .foregroundStyle(hours > 72 ? Self.amber : .white.opacity(0.5))
         } else {
-            Text("no satellite data").foregroundStyle(Self.amber)
+            Text(compact ? "no sats" : "no satellite data").foregroundStyle(Self.amber)
         }
     }
 
-    @ViewBuilder private var place: some View {
+    @ViewBuilder private func place(_ compact: Bool) -> some View {
         switch model.location {
         case .fallback(let name):
-            Text("\(name) · no GPS").foregroundStyle(Self.amber)
+            Text(compact ? "\(name)?" : "\(name) · no GPS").foregroundStyle(Self.amber)
         case .gps(let at):
             let age = Date().timeIntervalSince(at)
-            Text(String(format: "GPS %.2f°, %.2f° · %@", model.observer.latitude, model.observer.longitude,
-                        age < 120 ? "now" : "\(Int(age / 60)) min ago"))
+            Text(compact ? "GPS" + (age < 120 ? "" : " \(Int(age / 60))m")
+                         : String(format: "GPS %.2f°, %.2f° · %@", model.observer.latitude, model.observer.longitude,
+                                  age < 120 ? "now" : "\(Int(age / 60)) min ago"))
                 .foregroundStyle(age > 6 * 3600 ? Self.amber : .white.opacity(0.75))
         }
     }
 
-    private func timeText(_ d: Date) -> String {
+    private func timeText(_ d: Date, compact: Bool) -> String {
         let f = DateFormatter()
-        f.dateFormat = model.timeTraveling ? "yyyy-MM-dd HH:mm zzz" : "HH:mm"
-        return (model.fixedDate != nil && model.timeOffset == 0 ? "Frozen " : "") + f.string(from: d)
+        f.dateFormat = !model.timeTraveling ? "HH:mm" : compact ? "MMM d HH:mm" : "yyyy-MM-dd HH:mm zzz"
+        return (model.fixedDate != nil && model.timeOffset == 0 && !compact ? "Frozen " : "") + f.string(from: d)
     }
 }

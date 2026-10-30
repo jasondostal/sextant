@@ -9,8 +9,8 @@ import SkyCore
 final class SkyModel {
     let sky: SkyData
     var camera = Camera()
-    var observer = Observer(latitude: 44.5236, longitude: -89.5746, height: 330)
-    var location: LocationSource = .fallback("Stevens Point")
+    var observer: Observer
+    var location: LocationSource
     /// Nil = live; otherwise the sky is frozen at this instant.
     var fixedDate: Date?
     /// Time travel: how far the sky runs ahead of (or behind) the clock. It keeps ticking.
@@ -58,6 +58,7 @@ final class SkyModel {
 
     init() {
         sky = try! SkyData.load()
+        (observer, location) = Self.timeZoneGuess()
         applyLaunchArguments()
         locator.onFix = { [weak self] loc in
             guard let self else { return }
@@ -235,6 +236,22 @@ final class SkyModel {
             location = .fallback(d.string(forKey: "place") ?? "set by launch arguments")
             argumentsSetPlace = true
         }
+    }
+}
+
+extension SkyModel {
+    /// Until (or unless) there's a GPS fix: the principal city of the phone's time
+    /// zone (IANA zone.tab, bundled). Hundreds of km off at worst, which moves the
+    /// stars by a few degrees, against a whole hemisphere for a fixed default.
+    static func timeZoneGuess() -> (Observer, LocationSource) {
+        if let url = Bundle.main.url(forResource: "zones", withExtension: "json"),
+           let data = try? Data(contentsOf: url),
+           let zones = try? JSONSerialization.jsonObject(with: data) as? [String: [Any]],
+           let z = zones[TimeZone.current.identifier],
+           let lat = z[0] as? Double, let lon = z[1] as? Double, let city = z[2] as? String {
+            return (Observer(latitude: lat, longitude: lon, height: 0), .fallback(city))
+        }
+        return (Observer(latitude: 0, longitude: 0, height: 0), .fallback("0°, 0°"))
     }
 }
 

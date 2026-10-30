@@ -19,9 +19,9 @@ targets:
     info:
       path: Sky/Info.plist
       properties:
-        CFBundleDisplayName: Sky
-        NSLocationWhenInUseUsageDescription: Sky puts the stars where they are from where you're standing.
-        NSMotionUsageDescription: Sky follows your phone as you point it at the sky.
+        CFBundleDisplayName: Sextant
+        NSLocationWhenInUseUsageDescription: Sextant puts the stars and satellites where they are from where you're standing. Your location stays on your phone.
+        NSMotionUsageDescription: Sextant follows your phone as you point it at the sky.
         UILaunchScreen: {}
         UIRequiresFullScreen: true
         UIStatusBarHidden: true
@@ -38,7 +38,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 8N87FTKWXL
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        MARKETING_VERSION: "0.1"
+        MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
   # The same app in a Mac window: lets the sky be screenshotted and compared
   # against Stellarium without a simulator or a phone.
@@ -52,7 +52,7 @@ targets:
     info:
       path: SkyMac/Info.plist
       properties:
-        CFBundleDisplayName: Sky
+        CFBundleDisplayName: Sextant
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.ducktyping.sky.mac

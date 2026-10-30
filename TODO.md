@@ -31,3 +31,10 @@
 - [x] Selected satellite: track across the sky ±12 min, 30 s ticks. [ ] Next passes list.
 - [ ] Pass predictions vs Heavens-Above (look-and-feel check of the magnitudes).
 - [x] Labels kept out of the top readout band.
+
+## App Store: "Sextant: Night Sky Objects" (record created 2026-10-29)
+- [x] Home-screen name Sextant, version 1.0; credits in Settings; time-zone location guess; bundled satellite seed; compact readout in portrait.
+- [ ] Subtitle "Satellite tracker & star map", keywords, description.
+- [ ] Privacy + support pages on ducktyping.dev/sextant.
+- [ ] Screenshots (6.9": 1290x2796 from the 15 Pro Max is accepted).
+- [ ] App Store Connect API key -> archive + TestFlight upload from the CLI.

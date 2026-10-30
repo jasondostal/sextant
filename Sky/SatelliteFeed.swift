@@ -21,14 +21,14 @@ final class SatelliteFeed {
 
     func start() {
         Task.detached(priority: .utility) { [self] in
-            if let (cat, fetched) = loadCached() { publish(cat, fetched) }
+            if let (cat, fetched) = loadCached() ?? loadSeed() { publish(cat, fetched) }
             guard needsRefresh() else { return }
             UserDefaults.standard.set(Date(), forKey: "celestrakLastAttempt")
             do {
                 var fresh: [Data] = []
                 for g in Self.groups {
                     var req = URLRequest(url: URL(string: String(format: Self.url, g))!)
-                    req.setValue("Sky (personal iOS app)", forHTTPHeaderField: "User-Agent")
+                    req.setValue("Sextant/1.0 (iOS; https://ducktyping.dev/sextant)", forHTTPHeaderField: "User-Agent")
                     let (data, resp) = try await URLSession.shared.data(for: req)
                     guard (resp as? HTTPURLResponse)?.statusCode == 200, data.first == UInt8(ascii: "[") else {
                         throw URLError(.badServerResponse)
@@ -61,6 +61,16 @@ final class SatelliteFeed {
         let data = Self.groups.compactMap { try? Data(contentsOf: file($0)) }
         guard data.count == Self.groups.count, let cat = try? SatelliteCatalog(groups: data) else { return nil }
         return (cat, at)
+    }
+
+    /// First launch, offline: the bright satellites as they were when the app was
+    /// built (Sky/Resources/seed-visual.json), dated by their newest orbit. They
+    /// hide on their own once two weeks stale, and the readout shows their age.
+    private func loadSeed() -> (SatelliteCatalog, Date)? {
+        guard let url = Bundle.main.url(forResource: "seed-visual", withExtension: "json"),
+              let data = try? Data(contentsOf: url), let cat = try? SatelliteCatalog(groups: [data]),
+              let epoch = cat.newestEpoch else { return nil }
+        return (cat, epoch)
     }
 
     private func needsRefresh() -> Bool {
