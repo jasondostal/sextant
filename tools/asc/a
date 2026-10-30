@@ -1,0 +1,3 @@
+#!/bin/zsh
+# shorthand: tools/asc/a GET /v1/apps
+exec ${0:A:h}/.venv/bin/python ${0:A:h}/asc.py "$@"

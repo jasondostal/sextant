@@ -4,3 +4,5 @@ DerivedData/
 xcuserdata/
 .DS_Store
 tools/oracle/.venv/
+build/
+tools/asc/.venv/
