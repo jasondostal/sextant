@@ -89,7 +89,7 @@ struct SkyView: View {
                         if model.target != nil, !card {
                             Color.clear.frame(width: 260, height: 56).contentShape(Rectangle())
                                 .onTapGesture { card = true }
-                                .offset(y: -4)
+                                .offset(y: geo.size.width < 700 ? -66 : -4)
                         }
                     }
                 }
@@ -402,6 +402,10 @@ struct Labels: View {
 
     private func dist(_ a: CGPoint, _ b: CGPoint) -> CGFloat { hypot(a.x - b.x, a.y - b.y) }
 
+    /// How far the pill sits above the bottom edge: beside the buttons when
+    /// there's room (landscape), above them when there isn't (portrait).
+    static func pillLift(_ size: CGSize) -> CGFloat { size.width < 700 ? 84 : 22 }
+
     /// A selected satellite's path across the sky this pass: ±12 minutes,
     /// above the horizon, ticked every 30 s with the time each minute.
     private func drawTrack(_ gc: GraphicsContext, satellite id: Int, proj: Projector, size: CGSize) {
@@ -448,18 +452,22 @@ struct Labels: View {
                   style: StrokeStyle(lineWidth: 1.5, dash: [9, 7]))
     }
 
-    /// A short fading tail behind each satellite: where it was over the last
-    /// 8 s, so the dot on the phone can be matched to the one crossing the sky.
+    /// A fading tail behind each satellite showing which way it's going, so the
+    /// dot on the phone can be matched to the one crossing the sky. About 6° of sky
+    /// long whatever the speed: 6 s for a Starlink overhead, 30 s for a slow one up high.
     private func drawTrails(_ gc: GraphicsContext, satellites: [SkyObject], proj: Projector) {
         guard !satellites.isEmpty else { return }
-        let steps = [8.0, 5, 2.5]
-        let frames = steps.map { SatelliteFrame(date: date.addingTimeInterval(-$0), observer: model.observer) }
         let color = Color(red: 0.31, green: 0.80, blue: 0.81)
+        let obs = model.observer
+        let oneAgo = SatelliteFrame(date: date.addingTimeInterval(-1), observer: obs)
         for o in satellites {
-            guard case .satellite(let id)? = o.target, let sat = model.satellites.satellite(id: id) else { continue }
+            guard case .satellite(let id)? = o.target, let sat = model.satellites.satellite(id: id),
+                  let was = oneAgo.position(of: sat) else { continue }
+            let degPerSec = max(0.05, was.horizontal.separation(from: o.horizontal))
+            let span = min(30, max(6, 6 / degPerSec))
             var pts: [CGPoint] = []
-            for f in frames {
-                guard let p = f.position(of: sat),
+            for k in stride(from: 6, through: 1, by: -1) {
+                guard let p = SatelliteFrame(date: date.addingTimeInterval(-span * Double(k) / 6), observer: obs).position(of: sat),
                       let pt = proj.point(refractHorizon(SIMD3<Float>(p.horizontal.vector))) else { continue }
                 pts.append(pt)
             }
@@ -469,8 +477,8 @@ struct Labels: View {
                 var seg = Path()
                 seg.move(to: pts[i - 1])
                 seg.addLine(to: pts[i])
-                let a = 0.55 * Double(i) / Double(pts.count - 1)
-                gc.stroke(seg, with: .color(color.opacity(a)), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                let a = 0.8 * pow(Double(i) / Double(pts.count - 1), 1.3)
+                gc.stroke(seg, with: .color(color.opacity(a)), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
             }
         }
     }
@@ -556,7 +564,7 @@ struct Labels: View {
         let sub = gc.resolve(Text(detail).font(.system(size: 12)).foregroundStyle(.white.opacity(0.7)))
         let ts = title.measure(in: size), ss = sub.measure(in: size)
         let w = max(ts.width, ss.width) + 36, h = ts.height + ss.height + 18
-        let rect = CGRect(x: (size.width - w) / 2, y: size.height - h - 22, width: w, height: h)
+        let rect = CGRect(x: (size.width - w) / 2, y: size.height - h - Labels.pillLift(size), width: w, height: h)
         let pill = Path(roundedRect: rect, cornerRadius: h / 2)
         gc.fill(pill, with: .color(Color(red: 0.05, green: 0.09, blue: 0.20).opacity(0.82)))
         gc.stroke(pill, with: .color(.white.opacity(0.18)), lineWidth: 1)
