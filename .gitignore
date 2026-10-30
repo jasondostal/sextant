@@ -6,3 +6,4 @@ xcuserdata/
 tools/oracle/.venv/
 build/
 tools/asc/.venv/
+__pycache__/
