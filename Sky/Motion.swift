@@ -56,7 +56,9 @@ final class MotionTracker {
     static let speedGain: Float = 0.5         // Hz per deg/s
 
     private func smooth(_ b: Camera.Basis, at t: TimeInterval) -> Camera.Basis {
-        let raw = simd_quatf(simd_float3x3(columns: (b.right, b.up, b.forward)))
+        // right, up, backward is a proper rotation (right, up, forward is a mirror
+        // image, and a quaternion made from one is garbage)
+        let raw = simd_quatf(simd_float3x3(columns: (b.right, b.up, -b.forward)))
         guard var q = smoothed, let last = lastRaw, t > last.t else {
             smoothed = raw
             lastRaw = (raw, t)
@@ -75,7 +77,7 @@ final class MotionTracker {
         q = simd_slerp(q, raw, alpha(Self.stillCutoff * zoom + Self.speedGain * speed))
         smoothed = q
         let m = simd_float3x3(q)
-        return Camera.Basis(right: m.columns.0, up: m.columns.1, forward: m.columns.2)
+        return Camera.Basis(right: m.columns.0, up: m.columns.1, forward: -m.columns.2)
     }
 
     /// Screen right/up in sky coordinates for the current interface orientation.
