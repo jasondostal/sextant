@@ -14,6 +14,8 @@ final class MotionTracker {
     /// screen, so the smoothing works harder.
     var fov: () -> Double = { 75 }
     private var smoothed: simd_quatf?
+    private var lastRaw: (q: simd_quatf, t: TimeInterval)?
+    private var speed: Float = 0          // deg/s, itself lightly filtered
 
     #if os(iOS)
     private let manager = CMMotionManager()
@@ -26,17 +28,19 @@ final class MotionTracker {
             CMMotionManager.availableAttitudeReferenceFrames().contains(.xTrueNorthZVertical)
                 ? .xTrueNorthZVertical : .xMagneticNorthZVertical
         manager.startDeviceMotionUpdates(using: frame, to: .main) { [weak self] motion, _ in
-            guard let self, let m = motion?.attitude.rotationMatrix else { return }
+            guard let self, let motion, case let m = motion.attitude.rotationMatrix else { return }
             let x = SIMD3<Float>(Float(m.m11), Float(m.m12), Float(m.m13))
             let y = SIMD3<Float>(Float(m.m21), Float(m.m22), Float(m.m23))
             let z = SIMD3<Float>(Float(m.m31), Float(m.m32), Float(m.m33))
-            self.onUpdate?(self.smooth(Self.screenBasis(x: x, y: y, z: z)))
+            self.onUpdate?(self.smooth(Self.screenBasis(x: x, y: y, z: z), at: motion.timestamp))
         }
     }
 
     func stop() {
         manager.stopDeviceMotionUpdates()
         smoothed = nil
+        lastRaw = nil
+        speed = 0
     }
     #else
     var available: Bool { false }
@@ -44,21 +48,31 @@ final class MotionTracker {
     func stop() {}
     #endif
 
-    /// Adaptive low-pass on the orientation (the one-euro idea): a reading close to
-    /// the last is mostly tremor and sensor noise, so it moves the view a little; a
-    /// big change is you turning, so it comes through nearly at once. At 60 Hz,
-    /// sitting still settles over ~0.2 s; a sweep lags by a frame or two.
-    private func smooth(_ b: Camera.Basis) -> Camera.Basis {
+    /// The one-euro filter on the orientation: its cutoff rises with how fast the
+    /// phone is turning. Held still, it's low (~1.2 Hz) and tremor and sensor noise
+    /// are smoothed out; turning, it opens up in proportion, so a slow pan lags by
+    /// ~40 ms and a quick sweep by ~10 ms. Zoomed in, the still cutoff drops further.
+    static let stillCutoff: Float = 1.2       // Hz
+    static let speedGain: Float = 0.5         // Hz per deg/s
+
+    private func smooth(_ b: Camera.Basis, at t: TimeInterval) -> Camera.Basis {
         let raw = simd_quatf(simd_float3x3(columns: (b.right, b.up, b.forward)))
-        guard var q = smoothed else {
+        guard var q = smoothed, let last = lastRaw, t > last.t else {
             smoothed = raw
+            lastRaw = (raw, t)
             return b
         }
+        let dt = Float(min(0.1, t - last.t))
+        func degrees(_ a: simd_quatf, _ b: simd_quatf) -> Float {
+            2 * acos(min(1, abs(simd_dot(a.vector, b.vector)))) * 180 / .pi
+        }
+        func alpha(_ cutoff: Float) -> Float { 1 / (1 + 1 / (2 * .pi * cutoff * dt)) }
+        // how fast it's really turning, from the raw readings, smoothed at 1 Hz
+        speed += (degrees(last.q, raw) / dt - speed) * alpha(1)
+        lastRaw = (raw, t)
+        let zoom = Float(min(1, max(0.4, fov() / 75)))
         if simd_dot(q.vector, raw.vector) < 0 { q = simd_quatf(vector: -q.vector) }   // same hemisphere
-        let step = 2 * acos(min(1, abs(simd_dot(q.vector, raw.vector)))) * 180 / .pi  // degrees
-        let zoom = Float(min(1, max(0.25, fov() / 75)))
-        let alpha = min(0.9, 0.07 * zoom + 0.6 * pow(step / 2.5, 1.6))
-        q = simd_slerp(q, raw, alpha)
+        q = simd_slerp(q, raw, alpha(Self.stillCutoff * zoom + Self.speedGain * speed))
         smoothed = q
         let m = simd_float3x3(q)
         return Camera.Basis(right: m.columns.0, up: m.columns.1, forward: m.columns.2)
