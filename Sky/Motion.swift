@@ -10,6 +10,10 @@ import UIKit
 /// conversion needed. The camera looks out of the back of the phone.
 final class MotionTracker {
     var onUpdate: ((Camera.Basis) -> Void)?
+    /// The current field of view: zoomed in, a hand's tremor covers more of the
+    /// screen, so the smoothing works harder.
+    var fov: () -> Double = { 75 }
+    private var smoothed: simd_quatf?
 
     #if os(iOS)
     private let manager = CMMotionManager()
@@ -26,16 +30,39 @@ final class MotionTracker {
             let x = SIMD3<Float>(Float(m.m11), Float(m.m12), Float(m.m13))
             let y = SIMD3<Float>(Float(m.m21), Float(m.m22), Float(m.m23))
             let z = SIMD3<Float>(Float(m.m31), Float(m.m32), Float(m.m33))
-            self.onUpdate?(Self.screenBasis(x: x, y: y, z: z))
+            self.onUpdate?(self.smooth(Self.screenBasis(x: x, y: y, z: z)))
         }
     }
 
-    func stop() { manager.stopDeviceMotionUpdates() }
+    func stop() {
+        manager.stopDeviceMotionUpdates()
+        smoothed = nil
+    }
     #else
     var available: Bool { false }
     func start() {}
     func stop() {}
     #endif
+
+    /// Adaptive low-pass on the orientation (the one-euro idea): a reading close to
+    /// the last is mostly tremor and sensor noise, so it moves the view a little; a
+    /// big change is you turning, so it comes through nearly at once. At 60 Hz,
+    /// sitting still settles over ~0.2 s; a sweep lags by a frame or two.
+    private func smooth(_ b: Camera.Basis) -> Camera.Basis {
+        let raw = simd_quatf(simd_float3x3(columns: (b.right, b.up, b.forward)))
+        guard var q = smoothed else {
+            smoothed = raw
+            return b
+        }
+        if simd_dot(q.vector, raw.vector) < 0 { q = simd_quatf(vector: -q.vector) }   // same hemisphere
+        let step = 2 * acos(min(1, abs(simd_dot(q.vector, raw.vector)))) * 180 / .pi  // degrees
+        let zoom = Float(min(1, max(0.25, fov() / 75)))
+        let alpha = min(0.9, 0.07 * zoom + 0.6 * pow(step / 2.5, 1.6))
+        q = simd_slerp(q, raw, alpha)
+        smoothed = q
+        let m = simd_float3x3(q)
+        return Camera.Basis(right: m.columns.0, up: m.columns.1, forward: m.columns.2)
+    }
 
     /// Screen right/up in sky coordinates for the current interface orientation.
     private static func screenBasis(x: SIMD3<Float>, y: SIMD3<Float>, z: SIMD3<Float>) -> Camera.Basis {

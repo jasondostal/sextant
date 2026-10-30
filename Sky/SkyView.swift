@@ -82,7 +82,7 @@ struct SkyView: View {
                             .buttonStyle(.plain)
                         }
                         Spacer()
-                        if model.canPoint { PointButton(model: model) }
+                        if model.canPoint || model.pointing { PointButton(model: model) }
                     }
                     .overlay(alignment: .bottom) {
                         // the pill is drawn in the label canvas; this is its tap target
@@ -161,20 +161,45 @@ struct NightButton: View {
     }
 }
 
-/// Toggles point-at-the-sky mode; its label says which mode you're in.
+/// Point mode on and off, as a compass: the needle points north from wherever
+/// you're facing, and the ring lights up while the phone is steering the view.
 struct PointButton: View {
     let model: SkyModel
 
     var body: some View {
-        Button { model.setPointing(!model.pointing) } label: {
-            Label(model.pointing ? "Pointing" : "Drag", systemImage: model.pointing ? "scope" : "hand.draw")
-                .font(.system(size: 14, weight: .semibold))
-                .padding(.horizontal, 14).padding(.vertical, 9)
-                .background(Capsule().fill(Color(red: 0.05, green: 0.09, blue: 0.20).opacity(0.82)))
-                .overlay(Capsule().stroke(model.pointing ? Color.cyan.opacity(0.7) : .white.opacity(0.18)))
-                .foregroundStyle(model.pointing ? Color.cyan : .white)
+        let cyan = Color(red: 0.31, green: 0.80, blue: 0.81)
+        let on = model.pointing
+        let heading = Horizontal(vector: SIMD3<Double>(model.camera.basis.forward)).azimuth
+        Button { model.setPointing(!on) } label: {
+            Canvas { gc, size in
+                let c = CGPoint(x: size.width / 2, y: size.height / 2)
+                let r = size.width / 2 - 9
+                // ticks at the cardinal points
+                for k in 0..<4 {
+                    let a = Double(k) * .pi / 2
+                    var t = Path()
+                    t.move(to: CGPoint(x: c.x + sin(a) * (r + 1), y: c.y - cos(a) * (r + 1)))
+                    t.addLine(to: CGPoint(x: c.x + sin(a) * (r + 4), y: c.y - cos(a) * (r + 4)))
+                    gc.stroke(t, with: .color(.white.opacity(0.5)), lineWidth: 1.2)
+                }
+                // the needle, north half red, turned so north is where north is
+                var g = gc
+                g.translateBy(x: c.x, y: c.y)
+                g.rotate(by: .degrees(-heading))
+                var north = Path(), south = Path()
+                north.addLines([CGPoint(x: -4, y: 0), CGPoint(x: 0, y: -r), CGPoint(x: 4, y: 0)])
+                south.addLines([CGPoint(x: -4, y: 0), CGPoint(x: 0, y: r), CGPoint(x: 4, y: 0)])
+                g.fill(north, with: .color(Color(red: 0.95, green: 0.33, blue: 0.30)))
+                g.fill(south, with: .color(.white.opacity(0.85)))
+                g.fill(Path(ellipseIn: CGRect(x: -2, y: -2, width: 4, height: 4)), with: .color(.black.opacity(0.6)))
+            }
+            .frame(width: 44, height: 44)
+            .background(Circle().fill(Color(red: 0.05, green: 0.09, blue: 0.20).opacity(0.82)))
+            .overlay(Circle().stroke(on ? cyan : .white.opacity(0.18), lineWidth: on ? 2 : 1))
+            .shadow(color: on ? cyan.opacity(0.5) : .clear, radius: 6)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(on ? "Point mode on" : "Point mode off")
     }
 }
 

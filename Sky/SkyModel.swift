@@ -140,6 +140,7 @@ final class SkyModel {
         if motion.available { UserDefaults.standard.set(on, forKey: "pointMode") }
         if on {
             motion.onUpdate = { [weak self] b in self?.camera.attitude = b }
+            motion.fov = { [weak self] in self?.camera.fov ?? 75 }
             motion.start()
         } else {
             motion.stop()
