@@ -34,7 +34,7 @@
 
 ## App Store: "Sextant: Night Sky Objects" (record created 2026-10-29)
 - [x] Home-screen name Sextant, version 1.0; credits in Settings; time-zone location guess; bundled satellite seed; compact readout in portrait.
-- [ ] Subtitle "Satellite tracker & star map", keywords, description.
-- [ ] Privacy + support pages on ducktyping.dev/sextant.
+- [x] Listing text: docs/store.md (subtitle, keywords, description, privacy label, review notes).
+- [x] Privacy + support pages LIVE at ducktyping.dev/sextant/ (+ /privacy/), contact support@ducktyping.dev. Not in the site's git yet.
 - [ ] Screenshots (6.9": 1290x2796 from the 15 Pro Max is accepted).
 - [ ] App Store Connect API key -> archive + TestFlight upload from the CLI.
