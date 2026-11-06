@@ -6,7 +6,7 @@ import SwiftUI
 /// looking at between dusk and dawn, an altitude chart for the one you pick, and
 /// for satellites the passes you can actually see rather than orbit wiggles.
 struct TonightItem: Identifiable {
-    enum Kind { case moon, planet, satellite, constellation, star, deepSky }
+    enum Kind { case moon, planet, satellite, constellation, star, deepSky, comet, shower }
     let id: Target
     let name: String
     let kind: Kind
@@ -89,7 +89,7 @@ struct TonightReport {
         }
     }
 
-    static func build(day: Date, observer: Observer, sky: SkyData, satellites: [Satellite]) -> TonightReport {
+    static func build(day: Date, observer: Observer, sky: SkyData, satellites: [Satellite], comets: [Comet] = []) -> TonightReport {
         let night = Night(day: day, observer: observer)
         let (start, end, n, frames, dark, sunEvents) = (night.start, night.end, night.n, night.frames, night.dark, night.sunEvents)
 
@@ -107,6 +107,34 @@ struct TonightReport {
             }
             if let it = night.item(.body(b), b.rawValue, b == .moon ? .moon : .planet, curve: pos.map(\.geometric.altitude),
                              events: ev, phase: phase, prefix: prefix) { items.append(it) }
+        }
+
+        // a good meteor shower within a few days of its peak: when the radiant is up
+        let midnight = dark.isEmpty ? start.addingTimeInterval(12 * 3600) : night.frames[dark[dark.count / 2]].date
+        for (s, d) in MeteorShower.active(on: midnight) where (s.zhr ?? 0) >= 10 && abs(d) <= 3 {
+            let curve = frames.map { f in let r = s.radiant(at: f.date); return f.horizontal(raHours: r.raHours, decDegrees: r.decDegrees).altitude }
+            let ev = Almanac.events(from: start, to: end, horizon: 0) { t in
+                let f = SkyFrame(date: t, observer: observer), r = s.radiant(at: t)
+                return f.horizontal(raHours: r.raHours, decDegrees: r.decDegrees)
+            }
+            let peak = nextPeak(s, after: midnight.addingTimeInterval(-3 * 86400))
+            let moon = SkyFrame(date: peak, observer: observer).position(of: .moon).phase
+            let prefix = "Meteor shower, " + showerStatus(s, at: midnight) + " (" + dayClock(peak, midnight) + "). " +
+                "Up to \(Int(s.zhr ?? 0)) an hour under a dark sky with the radiant overhead; " +
+                (moon > 0.6 ? "a bright Moon (\(Int((moon * 100).rounded()))% lit) will wash out the faint ones. " :
+                 moon < 0.25 ? "little moonlight. " : "the Moon is \(Int((moon * 100).rounded()))% lit. ") + "Radiant: "
+            if let it = night.item(.shower(s.code), s.name, .shower, curve: curve, events: ev, prefix: prefix) { items.append(it) }
+        }
+
+        // comets you could find with binoculars
+        for c in comets {
+            let pos = frames.map { $0.position(of: c) }
+            guard let m = dark.map({ pos[$0].magnitude }).min(), m <= 10 else { continue }
+            let ev = SkyFrame.events(of: c, observer: observer, from: start, to: end)
+            let prefix = String(format: "Comet, about magnitude %.1f (a forecast: comets often beat or miss it). ", m)
+            if let it = night.item(.comet(c.id), cometLabel(c), .comet, curve: pos.map(\.geometric.altitude), events: ev, prefix: prefix) {
+                items.append(it)
+            }
         }
 
         // satellites bright enough to notice, with a pass you can see
@@ -277,9 +305,9 @@ struct TonightPanel: View {
         .padding(.top, 28)        // clear the title bar
         #endif
         .task(id: "\(day.timeIntervalSince1970)-\(model.satelliteCount)-\(model.observer.latitude)") {
-            let (d, obs, sky, sats) = (day, model.observer, model.sky, model.satellites.all)
+            let (d, obs, sky, sats, comets) = (day, model.observer, model.sky, model.satellites.all, model.comets)
             let r = await Task.detached(priority: .userInitiated) {
-                TonightReport.build(day: d, observer: obs, sky: sky, satellites: sats)
+                TonightReport.build(day: d, observer: obs, sky: sky, satellites: sats, comets: comets)
             }.value
             report = r
             // `-tonightPick ISS` (screenshots), once it shows up (satellites load later)
@@ -411,6 +439,8 @@ struct TonightPanel: View {
         case .constellation: Color(red: 0.72, green: 0.74, blue: 0.80)
         case .star: Color(red: 0.93, green: 0.91, blue: 0.78)
         case .deepSky: Color(red: 0.74, green: 0.66, blue: 0.95)
+        case .comet: cometColor
+        case .shower: showerColor
         }
     }
 }
@@ -573,6 +603,23 @@ struct TileIcon: View {
                         with: .color(violet.opacity(0.35)))
                 gc.stroke(Path(ellipseIn: CGRect(x: c.x - r * 0.8, y: c.y - r * 0.8, width: r * 1.6, height: r * 1.6)),
                           with: .color(violet.opacity(0.8)), style: StrokeStyle(lineWidth: 1.2, dash: [3, 3]))
+            case .comet:
+                var tail = Path()
+                tail.move(to: CGPoint(x: c.x - r * 0.3, y: c.y + r * 0.3))
+                tail.addLine(to: CGPoint(x: c.x + r * 0.85, y: c.y - r * 0.85))
+                gc.stroke(tail, with: .linearGradient(Gradient(colors: [cometColor, cometColor.opacity(0)]),
+                                                      startPoint: CGPoint(x: c.x - r * 0.3, y: c.y + r * 0.3),
+                                                      endPoint: CGPoint(x: c.x + r * 0.85, y: c.y - r * 0.85)),
+                          style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                gc.fill(Path(ellipseIn: CGRect(x: c.x - r * 0.3 - 4, y: c.y + r * 0.3 - 4, width: 8, height: 8)), with: .color(.white))
+            case .shower:
+                var rays = Path()
+                for k in 0..<8 {
+                    let a = Double(k) * .pi / 4
+                    rays.move(to: CGPoint(x: c.x + r * 0.3 * cos(a), y: c.y + r * 0.3 * sin(a)))
+                    rays.addLine(to: CGPoint(x: c.x + r * 0.9 * cos(a), y: c.y + r * 0.9 * sin(a)))
+                }
+                gc.stroke(rays, with: .color(showerColor), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
             case .star:
                 var s = Path()
                 s.move(to: CGPoint(x: c.x, y: c.y - r)); s.addLine(to: CGPoint(x: c.x, y: c.y + r))

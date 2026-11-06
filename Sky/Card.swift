@@ -143,7 +143,29 @@ struct DetailCard: View {
                 ? "\(Int(r.horizontal.altitude.rounded()))° up, \(compassPoint(r.horizontal.azimuth))"
                 : "below the horizon, \(compassPoint(r.horizontal.azimuth))"),
         ]
-        if let m = r.magnitude { list.append(("Magnitude", String(format: "%.1f", m))) }
+        if case .shower(let code) = target, let s = MeteorShower.all.first(where: { $0.code == code }) {
+            list[0].0 = "Radiant"
+            list += showerRows(s, now)
+        }
+        if let m = r.magnitude {
+            if case .comet = target { list.append(("Magnitude", String(format: "%.1f (forecast)", m))) }
+            else { list.append(("Magnitude", String(format: "%.1f", m))) }
+        }
+        if case .comet(let id) = target, let c = model.comets.first(where: { $0.id == id }) {
+            let p = model.frame(at: now).position(of: c)
+            list.append(("From Earth", String(format: "%.2f AU (%.0f light-min)", p.distanceAU, p.distanceAU * 8.317)))
+            list.append(("From the Sun", String(format: "%.2f AU", p.sunDistanceAU)))
+            // the forecast peak within five years, to the nearest few days; a peak on the
+            // window's edge isn't one (it's still brightening), so say so
+            let samples = stride(from: -60.0, through: 1826, by: 5).map { now.addingTimeInterval($0 * 86400) }
+            if let i = samples.indices.min(by: { c.magnitude(at: samples[$0]) < c.magnitude(at: samples[$1]) }) {
+                let f = DateFormatter()
+                f.setLocalizedDateFormatFromTemplate("MMMyyyy")
+                let m = String(format: "about mag %.1f", c.magnitude(at: samples[i]))
+                list.append(("Brightest", i == samples.count - 1 ? "still brightening in \(f.string(from: samples[i]))"
+                                        : i == 0 ? "now, fading" : m + ", " + f.string(from: samples[i])))
+            }
+        }
         if case .body(let b) = target, let p = model.bodies(at: now).first(where: { $0.body == b }) {
             if b != .sun { list.append(("Lit", "\(Int((p.phase * 100).rounded()))%")) }
             list.append(("Distance", b == .moon ? String(format: "%.0f km", p.distanceAU * 149_597_870.7)
@@ -180,6 +202,22 @@ struct DetailCard: View {
                 nextChance(now)
             }
         }
+    }
+
+    /// A shower's facts: when it peaks and runs, how many, how fast, from what.
+    private func showerRows(_ s: MeteorShower, _ now: Date) -> [(String, String)] {
+        let peak = nextPeak(s, after: now)
+        let (from, to) = showerWindow(s, peak: peak)
+        let moon = model.frame(at: peak).position(of: .moon).phase
+        var rows: [(String, String)] = [
+            ("Peak", DayFormat.date.string(from: peak) + " · " + showerStatus(s, at: now)),
+            ("Active", DayFormat.date.string(from: from) + " – " + DayFormat.date.string(from: to)),
+            ("Rate", s.zhr.map { "up to \(Int($0)) an hour (dark sky, radiant overhead)" } ?? "variable"),
+            ("Speed", String(format: "%.0f km/s", s.speed)),
+            ("Moon at peak", "\(Int((moon * 100).rounded()))% lit"),
+        ]
+        if let parent = s.parentBody { rows.append(("From", parent)) }
+        return rows
     }
 
     /// When it's next worth looking for, and a way to see it then.
@@ -254,7 +292,7 @@ struct DetailCard: View {
             }.value
             return
         }
-        guard let r = model.resolve(t, at: now), let track = Track.of(t, sky: model.sky) else { return }
+        guard let r = model.resolve(t, at: now), let track = Track.of(t, sky: model.sky, comets: model.comets) else { return }
         let name = r.name
         next = .none
         let report = await Task.detached(priority: .userInitiated) { () -> TonightReport in

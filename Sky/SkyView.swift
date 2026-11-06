@@ -263,7 +263,7 @@ func terrainHeight(azimuthRadians az: Double) -> Double {
 }
 
 struct SkyObject {
-    enum Kind { case star, planet, moon, sun, satellite, deepSky }
+    enum Kind { case star, planet, moon, sun, satellite, deepSky, comet, shower }
     let name: String
     let kind: Kind
     let magnitude: Double
@@ -308,6 +308,21 @@ extension SkyModel {
             guard let p = proj.point(SIMD3<Float>(app.vector)) else { continue }
             out.append(SkyObject(name: d.name, kind: .deepSky, magnitude: d.magnitude, horizontal: app, screen: p,
                                  hidden: !aboveLand(app), detail: d.kind + " · " + d.designation, target: .deepSky(i)))
+        }
+        // comets as bright as the zoom shows stars (plus a little: they're worth finding)
+        let cometLimit = min(12, starLimit(fov: camera.fov) + 2)
+        for c in cometPositions(at: date) where c.magnitude <= cometLimit {
+            guard let p = proj.point(SIMD3<Float>(c.apparent.vector)) else { continue }
+            out.append(SkyObject(name: cometLabel(c.comet), kind: .comet, magnitude: c.magnitude, horizontal: c.apparent,
+                                 screen: p, hidden: !aboveLand(c.apparent), detail: c.comet.id.contains("/") ? "Comet · " + c.comet.id : "Comet", target: .comet(c.comet.id)))
+        }
+        // the radiants of good showers that are on
+        for (s, _) in MeteorShower.active(on: date) where (s.zhr ?? 0) >= 10 {
+            let r = s.radiant(at: date)
+            let app = Horizontal(vector: SIMD3<Double>(refractHorizon(SIMD3<Float>(frame.horizontal(raHours: r.raHours, decDegrees: r.decDegrees).vector))))
+            guard let p = proj.point(SIMD3<Float>(app.vector)) else { continue }
+            out.append(SkyObject(name: s.name, kind: .shower, magnitude: 2.5, horizontal: app, screen: p, hidden: !aboveLand(app),
+                                 detail: "Meteor shower radiant · " + showerStatus(s, at: date), target: .shower(s.code)))
         }
         for v in visibleSatellites(at: date) {
             let geo = SIMD3<Float>(v.position.horizontal.vector)
@@ -379,7 +394,11 @@ struct Labels: View {
                 case .moon: moonName
                 case .satellite: satelliteName
                 case .deepSky: deepSkyName
+                case .comet: cometColor
+                case .shower: showerColor
                 }
+                if o.kind == .comet { drawComet(gc, o, frame: frame, proj: proj) }
+                if o.kind == .shower { drawRadiant(gc, at: o.screen, dim: o.hidden) }
                 if o.kind == .deepSky {
                     // a soft marker: these are smudges, not points
                     gc.stroke(Path(ellipseIn: CGRect(x: o.screen.x - 7, y: o.screen.y - 7, width: 14, height: 14)),
@@ -475,6 +494,37 @@ struct Labels: View {
             }
         }
         gc.stroke(path, with: .color(color.opacity(0.45)), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+    }
+
+    /// A comet: a soft head and a tail pointing away from the Sun, a couple of degrees long.
+    private func drawComet(_ gc: GraphicsContext, _ o: SkyObject, frame: SkyFrame, proj: Projector) {
+        let alpha = o.hidden ? 0.35 : 1.0
+        if let sun = model.bodies(at: date).first(where: { $0.body == .sun }) {
+            let v = o.horizontal.vector, s = sun.geometric.vector
+            let away = simd_normalize(v - s * simd_dot(v, s))            // along the sky, away from the Sun
+            // direction from the sky, length fixed on screen: it's a marker, not a measured tail
+            if let ahead = proj.point(SIMD3<Float>(simd_normalize(v + away * 0.01))) {
+                let dx = ahead.x - o.screen.x, dy = ahead.y - o.screen.y, l = max(hypot(dx, dy), 1e-3)
+                let tip = CGPoint(x: o.screen.x + dx / l * 46, y: o.screen.y + dy / l * 46)
+                gc.stroke(Path { $0.move(to: o.screen); $0.addLine(to: tip) },
+                          with: .linearGradient(Gradient(colors: [cometColor.opacity(0.85 * alpha), cometColor.opacity(0)]),
+                                                startPoint: o.screen, endPoint: tip),
+                          style: StrokeStyle(lineWidth: 3, lineCap: .round))
+            }
+        }
+        gc.fill(Path(ellipseIn: CGRect(x: o.screen.x - 3.5, y: o.screen.y - 3.5, width: 7, height: 7)),
+                with: .color(Color(red: 1, green: 0.92, blue: 0.85).opacity(alpha)))
+    }
+
+    /// A shower's radiant: short rays out from the point the meteors seem to come from.
+    private func drawRadiant(_ gc: GraphicsContext, at p: CGPoint, dim: Bool) {
+        var rays = Path()
+        for k in 0..<8 {
+            let a = Double(k) * .pi / 4
+            rays.move(to: CGPoint(x: p.x + 6 * cos(a), y: p.y + 6 * sin(a)))
+            rays.addLine(to: CGPoint(x: p.x + 14 * cos(a), y: p.y + 14 * sin(a)))
+        }
+        gc.stroke(rays, with: .color(showerColor.opacity(dim ? 0.3 : 0.8)), style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
     }
 
     /// The Sun's path through the zodiac (and roughly the planets'): Star Walk's amber dashes.
@@ -592,6 +642,8 @@ struct Labels: View {
         case .sun: "Sun"
         case .satellite: "Satellite"
         case .deepSky: "Deep sky"
+        case .comet: "Comet"
+        case .shower: "Meteor shower"
         }
         let mag = o.magnitude.isNaN ? "" : String(format: " · mag %.1f", o.magnitude)
         let where_ = o.horizontal.altitude > 0

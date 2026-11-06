@@ -10,6 +10,8 @@ enum Target: Hashable {
     case constellation(Int)
     case satellite(Int)
     case deepSky(Int)
+    case comet(String)          // MPC designation
+    case shower(String)         // IMO code
 }
 
 struct Resolved {
@@ -46,6 +48,19 @@ extension SkyModel {
             let d = DeepSkyObject.all[i]
             return Resolved(name: d.name, kind: .deepSky, horizontal: apparent(frame(at: date).horizontal(star: d.direction).vector),
                             magnitude: d.magnitude, rangeKm: nil, detail: d.kind + " · " + d.designation)
+        case .comet(let id):
+            guard let c = comets.first(where: { $0.id == id }) else { return nil }
+            let p = frame(at: date).position(of: c)
+            // the MPC's brightness law runs off to magnitude 30+ far from the Sun: just say faint
+            let faint = p.magnitude > 15
+            return Resolved(name: cometLabel(c), kind: .comet, horizontal: p.apparent, magnitude: faint ? nil : p.magnitude,
+                            rangeKm: nil, detail: (c.id.contains("/") ? "Comet · " + c.id : "Comet") + (faint ? " · too faint to see now" : ""))
+        case .shower(let code):
+            guard let s = MeteorShower.all.first(where: { $0.code == code }) else { return nil }
+            let r = s.radiant(at: date)
+            return Resolved(name: s.name, kind: .shower,
+                            horizontal: apparent(frame(at: date).horizontal(raHours: r.raHours, decDegrees: r.decDegrees).vector),
+                            magnitude: nil, rangeKm: nil, detail: "Meteor shower · " + showerStatus(s, at: date))
         case .satellite(let id):
             guard let s = satellites.satellite(id: id),
                   let p = SatelliteFrame(date: date, observer: observer).position(of: s) else { return nil }
@@ -77,7 +92,11 @@ extension SkyModel {
             else if n.contains(q) { hits.append((base + 100, t)) }
         }
         let want = { (s: SearchScope) in scope == .all || scope == s }
-        if want(.solarSystem) { for b in Body.allCases { rank(b.rawValue, 0, .body(b)) } }
+        if want(.solarSystem) {
+            for b in Body.allCases { rank(b.rawValue, 0, .body(b)) }
+            for c in comets { rank(cometLabel(c) + " " + c.displayName + " comet", 12, .comet(c.id)) }
+        }
+        if want(.showers) { for s in MeteorShower.all { rank(s.name + " meteor shower " + s.code, 12, .shower(s.code)) } }
         if want(.constellations) { for (i, c) in sky.constellations.enumerated() { rank(c.name, 10, .constellation(i)) } }
         if want(.deepSky) { for (i, d) in DeepSkyObject.all.enumerated() { rank(d.name + " " + d.designation, 15, .deepSky(i)) } }
         if want(.stars) { for (i, n) in sky.catalog.names.sorted(by: { $0.key < $1.key }) { rank(n, 20, .star(i)) } }
@@ -114,6 +133,9 @@ extension SkyModel {
         t += [25544, 48274, 20580].filter { satellites.satellite(id: $0) != nil }.map { .satellite($0) }
         t += sky.catalog.names.keys.sorted().prefix(12).map { .star($0) }
         t += DeepSkyObject.all.indices.filter { DeepSkyObject.all[$0].magnitude < 4 }.map { .deepSky($0) }
+        // near the peak of a good shower, and comets you could see in binoculars
+        t += MeteorShower.active(on: date).filter { ($0.shower.zhr ?? 0) >= 10 && abs($0.daysFromPeak) <= 3 }.map { .shower($0.shower.code) }
+        t += cometPositions(at: date).filter { $0.magnitude <= 9 }.map { .comet($0.comet.id) }
         return upFirst(t, date)
     }
 
@@ -124,7 +146,14 @@ extension SkyModel {
         case .all:
             return suggestions()
         case .solarSystem:
-            return upFirst(Body.allCases.map { .body($0) }, date)
+            let comets: [Target] = cometPositions(at: date).sorted { $0.magnitude < $1.magnitude }.map { .comet($0.comet.id) }
+            return upFirst(Body.allCases.map { .body($0) }, date) + comets
+        case .showers:
+            // what's on now (nearest the peak first), then the year ahead in order
+            let active = MeteorShower.active(on: date).sorted { abs($0.daysFromPeak) < abs($1.daysFromPeak) }.map(\.shower)
+            let coming = MeteorShower.all.filter { !active.contains($0) }
+                .sorted { nextPeak($0, after: date) < nextPeak($1, after: date) }
+            return (active + coming).map { .shower($0.code) }
         case .satellites:
             // what's lit overhead, the famous three, then the brightest of the rest
             var t = overheadNow(limit: 12)
@@ -178,7 +207,7 @@ struct SearchGroup {
 /// The chips under the search field.
 enum SearchScope: String, CaseIterable, Identifiable {
     case all = "All", solarSystem = "Solar system", satellites = "Satellites", stars = "Stars"
-    case deepSky = "Deep sky", constellations = "Constellations"
+    case deepSky = "Deep sky", constellations = "Constellations", showers = "Meteor showers"
     var id: String { rawValue }
 
     init(_ t: Target) {
@@ -188,6 +217,8 @@ enum SearchScope: String, CaseIterable, Identifiable {
         case .star: self = .stars
         case .deepSky: self = .deepSky
         case .constellation: self = .constellations
+        case .comet: self = .solarSystem
+        case .shower: self = .showers
         }
     }
 
@@ -360,6 +391,8 @@ struct SearchPanel: View {
         case .planet?: Color(red: 0.90, green: 0.60, blue: 0.60)
         case .star?: Color(red: 0.93, green: 0.91, blue: 0.78)
         case .deepSky?: Color(red: 0.74, green: 0.66, blue: 0.95)
+        case .comet?: cometColor
+        case .shower?: showerColor
         default: .white
         }
         return HStack {

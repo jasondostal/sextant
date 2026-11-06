@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftUI
 import simd
 import SkyCore
 
@@ -16,6 +17,8 @@ extension Target {
         case .constellation(let i): "con:\(i)"
         case .satellite(let id): "sat:\(id)"
         case .deepSky(let i): "dso:\(i)"
+        case .comet(let id): "comet:\(id)"
+        case .shower(let code): "shower:\(code)"
         }
     }
 
@@ -28,6 +31,8 @@ extension Target {
         case "con": guard let i = Int(parts[1]) else { return nil }; self = .constellation(i)
         case "sat": guard let i = Int(parts[1]) else { return nil }; self = .satellite(i)
         case "dso": guard let i = Int(parts[1]) else { return nil }; self = .deepSky(i)
+        case "comet": self = .comet(parts[1])
+        case "shower": self = .shower(parts[1])
         default: return nil
         }
     }
@@ -40,8 +45,18 @@ struct Track: @unchecked Sendable {
     let horizon: Double
 
     /// Nil for satellites (they have passes, not rise and set) and bad indices.
-    static func of(_ t: Target, sky: SkyData) -> Track? {
+    static func of(_ t: Target, sky: SkyData, comets: [Comet]) -> Track? {
         switch t {
+        case .comet(let id):
+            guard let c = comets.first(where: { $0.id == id }) else { return nil }
+            return Track(position: { $0.position(of: c).geometric }, horizon: Almanac.horizon(for: nil))
+        case .shower(let code):
+            // the radiant, drifting day by day; "up" means the radiant is above the horizon
+            guard let s = MeteorShower.all.first(where: { $0.code == code }) else { return nil }
+            return Track(position: { f in
+                let r = s.radiant(at: f.date)
+                return f.horizontal(raHours: r.raHours, decDegrees: r.decDegrees)
+            }, horizon: 0)
         case .body(let b):
             return Track(position: { $0.position(of: b).geometric }, horizon: Almanac.horizon(for: b))
         case .star(let i):
@@ -99,11 +114,11 @@ final class HintCache {
         } ?? false
         if !fresh, !pending.contains(t) {
             pending.insert(t)
-            let sky = model.sky
+            let sky = model.sky, comets = model.comets
             let sat: Satellite? = if case .satellite(let id) = t { model.satellites.satellite(id: id) } else { nil }
             let valid = model.satellitesValid(at: now)
             queue.async { [weak self] in
-                let (text, until) = Self.compute(t, sky: sky, satellite: valid ? sat : nil, observer: obs, now: now)
+                let (text, until) = Self.compute(t, sky: sky, comets: comets, satellite: valid ? sat : nil, observer: obs, now: now)
                 DispatchQueue.main.async {
                     guard let self else { return }
                     self.pending.remove(t)
@@ -115,7 +130,11 @@ final class HintCache {
         return texts[t]
     }
 
-    static func compute(_ t: Target, sky: SkyData, satellite: Satellite?, observer obs: Observer, now: Date) -> (String, Date) {
+    static func compute(_ t: Target, sky: SkyData, comets: [Comet], satellite: Satellite?, observer obs: Observer, now: Date) -> (String, Date) {
+        if case .shower(let code) = t, let s = MeteorShower.all.first(where: { $0.code == code }) {
+            // the row's detail already says when it peaks; this says how good it is
+            return (s.zhr.map { "up to \(Int($0))/hour" } ?? "rate varies", now.addingTimeInterval(24 * 3600))
+        }
         if case .satellite = t {
             guard let sat = satellite else { return ("", now.addingTimeInterval(600)) }
             let passes = SatelliteFrame.passes(of: [sat], observer: obs, from: now.addingTimeInterval(-900),
@@ -127,13 +146,14 @@ final class HintCache {
             if from <= now { return ("visible now", to) }
             return ("pass " + soonClock(from, now), from)
         }
-        guard let tr = Track.of(t, sky: sky) else { return ("", now.addingTimeInterval(3600)) }
+        guard let tr = Track.of(t, sky: sky, comets: comets) else { return ("", now.addingTimeInterval(3600)) }
         let end = now.addingTimeInterval(26 * 3600)
         let ev = Almanac.events(from: now, to: end, horizon: tr.horizon) { tr.position(SkyFrame(date: $0, observer: obs)) }
         let up = tr.position(SkyFrame(date: now, observer: obs)).altitude > tr.horizon
         // stars and the like keep their declination: no rise in a day means never, from here
         var fixed = true
         if case .body = t { fixed = false }
+        if case .comet = t { fixed = false }
         if up {
             if let s = ev.sets.first { return ("sets " + soonClock(s.date, now), s.date) }
             return (fixed ? "never sets" : "up all day", now.addingTimeInterval(6 * 3600))
@@ -195,5 +215,56 @@ extension SkyModel {
 
     static func loadRecents() -> [Target] {
         (UserDefaults.standard.stringArray(forKey: recentsKey) ?? []).compactMap(Target.init(key:))
+    }
+}
+
+// MARK: comets and meteor showers
+
+let cometColor = Color(red: 0.95, green: 0.62, blue: 0.50)     // Star Walk's salmon
+let showerColor = Color(red: 1.0, green: 0.78, blue: 0.42)
+
+/// "96P/Machholz", "Tsuchinshan" (C/2026 C1), or the bare designation.
+func cometLabel(_ c: Comet) -> String {
+    guard let n = c.name else { return c.id }
+    return c.id.contains("/") ? n : c.id + "/" + n
+}
+
+/// The next maximum at or after `date` (a peak within the last two days still counts).
+func nextPeak(_ s: MeteorShower, after date: Date) -> Date {
+    let y = Calendar.current.component(.year, from: date)
+    let p = s.peakDate(in: y)
+    return p > date.addingTimeInterval(-2 * 86400) ? p : s.peakDate(in: y + 1)
+}
+
+/// "peak tonight", "peaks in 3 days", "peaked yesterday", or "peaks Dec 14".
+func showerStatus(_ s: MeteorShower, at date: Date) -> String {
+    guard s.isActive(on: date) else { return "peaks " + DayFormat.date.string(from: nextPeak(s, after: date)) }
+    let d = s.daysFromPeak(at: date)
+    switch d {
+    case -0.75...0.75: return "peak tonight"
+    case ..<0: let n = Int((-d).rounded()); return n == 1 ? "peaks tomorrow" : "peaks in \(n) days"
+    default: let n = Int(d.rounded()); return n == 1 ? "peaked yesterday" : "peaked \(n) days ago"
+    }
+}
+
+/// When a shower runs, as dates around its next peak.
+func showerWindow(_ s: MeteorShower, peak: Date) -> (Date, Date) {
+    let rate = 360 / 365.242189
+    let before = mod360(s.peakLongitude - s.startLongitude) / rate, after = mod360(s.endLongitude - s.peakLongitude) / rate
+    return (peak.addingTimeInterval(-before * 86400), peak.addingTimeInterval(after * 86400))
+}
+
+private func mod360(_ x: Double) -> Double {
+    let r = x.truncatingRemainder(dividingBy: 360)
+    return r < 0 ? r + 360 : r
+}
+
+extension SkyModel {
+    /// Comets worth carrying: forecast brighter than 12 at some point from two months
+    /// back to two years ahead (time travel), checked every 10 days so a brief bright
+    /// apparition near the Sun isn't stepped over.
+    static func keepComets(_ all: [Comet], around date: Date) -> [Comet] {
+        let dates = stride(from: -60.0, through: 730, by: 10).map { date.addingTimeInterval($0 * 86400) }
+        return all.filter { c in dates.contains { c.magnitude(at: $0) <= 12 } }
     }
 }

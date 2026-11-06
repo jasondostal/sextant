@@ -67,6 +67,8 @@ struct SettingsPanel: View {
         ("d3-celestial", "Olaf Frohn · BSD 3-Clause · constellation figures and names"),
         ("SatelliteKit", "Gavin Eadie · MIT License · SGP4 orbit propagation"),
         ("CelesTrak", "Dr. T.S. Kelso (celestrak.org) · satellite orbits and catalog"),
+        ("Minor Planet Center", "IAU MPC (minorplanetcenter.net) · comet orbits"),
+        ("IMO Meteor Shower Calendar", "International Meteor Organization (imo.net) · shower dates, radiants and rates"),
     ]
 
     private var magHint: String {

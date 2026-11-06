@@ -46,6 +46,11 @@ final class SkyModel {
     var recents: [Target] = SkyModel.loadRecents()
     @ObservationIgnored let hints = HintCache()
 
+    /// Comets forecast brighter than 12 within the year: the bundled snapshot, then the MPC's.
+    var comets: [Comet] = SkyModel.keepComets(CometCatalog.bundled, around: Date())
+    @ObservationIgnored private let cometFeed = CometFeed()
+    @ObservationIgnored private var cometCache: (Date, Observer, [CometPosition])?
+
     @ObservationIgnored private var bodyCache: (Date, Observer, [BodyPosition])?
     @ObservationIgnored private let locator = Locator()
     @ObservationIgnored private let motion = MotionTracker()
@@ -89,6 +94,17 @@ final class SkyModel {
             self.applySelectArgument()
         }
         feed.start()
+        cometFeed.onComets = { [weak self] all in
+            guard let self else { return }
+            Task.detached(priority: .utility) {
+                let kept = Self.keepComets(all, around: Date())
+                await MainActor.run {
+                    self.comets = kept
+                    self.cometCache = nil
+                }
+            }
+        }
+        cometFeed.start()
         // phone out, already pointing: the moving dot won't wait for a mode switch
         if motion.available, UserDefaults.standard.bool(forKey: "pointMode") { setPointing(true) }
     }
@@ -132,6 +148,15 @@ final class SkyModel {
         let b = Body.allCases.map { f.position(of: $0) }
         bodyCache = (date, observer, b)
         return b
+    }
+
+    /// Every carried comet's position, recomputed at most once a second.
+    func cometPositions(at date: Date) -> [CometPosition] {
+        if let (t, o, c) = cometCache, o == observer, abs(t.timeIntervalSince(date)) < 1 { return c }
+        let f = frame(at: date)
+        let c = comets.map { f.position(of: $0) }
+        cometCache = (date, observer, c)
+        return c
     }
 
     /// Faintest star drawn: deeper as you zoom in, like binoculars.
