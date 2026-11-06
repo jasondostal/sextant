@@ -40,8 +40,7 @@ struct SkyView: View {
                 #endif
             }
         }
-        .ignoresSafeArea(.container)
-        .background(Color.black)
+        .background(Color.black.ignoresSafeArea())
     }
 
     private var sky: some View {
@@ -109,11 +108,14 @@ struct SkyView: View {
                         }
                     }
                 }
-                .padding(.horizontal, 20)
+                // the sky is edge to edge, the controls aren't: clear of the Dynamic Island
+                // (top in portrait, one side in landscape) and the rounded corners
+                .padding(.leading, max(20, SafeArea.insets.leading))
+                .padding(.trailing, max(20, SafeArea.insets.trailing))
                 #if os(macOS)
                 .padding(.top, 36)        // clear the title bar
                 #else
-                .padding(.top, 12)
+                .padding(.top, max(12, SafeArea.insets.top))
                 #endif
                 .padding(.bottom, 18)
                 .nightVision(model.nightMode)
@@ -361,7 +363,7 @@ struct Labels: View {
             #if os(macOS)
             var topBand: CGFloat = 80          // title bar + readout chips
             #else
-            var topBand: CGFloat = 52          // readout chips
+            var topBand: CGFloat = 52 + SafeArea.insets.top          // readout chips, below the island
             #endif
             if model.timeBarOpen { topBand += 48 }
 
@@ -751,5 +753,20 @@ struct Readout: View {
         let f = DateFormatter()
         f.dateFormat = !model.timeTraveling ? "HH:mm" : compact ? "MMM d HH:mm" : "yyyy-MM-dd HH:mm zzz"
         return (model.fixedDate != nil && model.timeOffset == 0 && !compact ? "Frozen " : "") + f.string(from: d)
+    }
+}
+
+/// The window's safe-area insets, read from UIKit: the sky view ignores the safe
+/// area (it's edge to edge), which zeroes SwiftUI's own, but its controls mustn't.
+enum SafeArea {
+    static var insets: EdgeInsets {
+        #if os(iOS)
+        let window = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows).first { $0.isKeyWindow }
+        guard let i = window?.safeAreaInsets else { return EdgeInsets() }
+        return EdgeInsets(top: i.top, leading: i.left, bottom: i.bottom, trailing: i.right)
+        #else
+        return EdgeInsets()
+        #endif
     }
 }
