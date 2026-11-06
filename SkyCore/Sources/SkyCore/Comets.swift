@@ -165,6 +165,12 @@ func eclipticToEquatorial(_ v: SIMD3<Double>) -> SIMD3<Double> {
     return SIMD3(v.x, c * v.y - s * v.z, s * v.y + c * v.z)
 }
 
+/// The inverse: J2000 equatorial → J2000 ecliptic.
+func equatorialToEcliptic(_ v: SIMD3<Double>) -> SIMD3<Double> {
+    let c = 0.91748206206918181, s = 0.39777715593191371
+    return SIMD3(v.x, c * v.y + s * v.z, -s * v.y + c * v.z)
+}
+
 /// A comet, from one line of the MPC's `CometEls.txt`.
 public struct Comet: Identifiable, Equatable, Sendable {
     /// The designation alone: "C/2026 C1", "2P", "73P-BT", "A/2018 W3".
