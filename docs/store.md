@@ -66,7 +66,8 @@ No account, no ads, no tracking, no analytics. Your location is used on your pho
 
 - "Do you or your third-party partners collect data from this app?" → **No** → "Data Not Collected".
   (Location and motion are processed on device only; Apple's definition of "collect" is
-  transmitting off the device, which Sextant doesn't do. CelesTrak requests carry no user data.)
+  transmitting off the device, which Sextant doesn't do. CelesTrak and (1.1+) Minor Planet Center
+  requests carry no user data.)
 
 ## Export compliance
 
@@ -79,6 +80,10 @@ city of the device's time zone. Point mode (bottom-right button) uses the motion
 to pan otherwise. Satellites are visible in the sky view only when the Sun is below the
 horizon at the device's location; to see them at any time, tap the moon-and-stars button
 (Visible tonight) and pick a satellite, then "Show at <time>".
+
+1.1 addition: besides CelesTrak (satellite orbits), Sextant now downloads comet orbits from the
+IAU Minor Planet Center (minorplanetcenter.net) about once a week. Neither request carries any user
+data. Meteor showers are computed on device from the IMO calendar; nothing is fetched for them.
 
 ## Screenshots
 

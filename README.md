@@ -12,16 +12,24 @@ screen matches the one in the sky. Native SwiftUI + Metal, no accounts, no ads, 
 - **Point mode**: follows the phone's motion sensors; opens there by default.
 - **Satellites**: CelesTrak orbits fetched on device (a snapshot ships for first launch
   offline), SGP4 via SatelliteKit, motion trails, pass tracks, "Overhead now".
-- **Visible tonight**: Moon, planets, bright satellite passes and deep-sky objects
+- **Visible tonight**: Moon, planets, bright satellite passes, meteor showers near their peak,
+  binocular comets and deep-sky objects
   between dusk and dawn, with an altitude chart and "Show at <time>".
-- **Search** across stars, planets, constellations and satellites; time travel.
+- **Search** across stars, planets, comets, meteor showers, constellations, deep-sky objects and
+  satellites, grouped by kind, each row with its next rise, set or pass; recent searches.
+- **Discovery**: the detail card says when anything that isn't up tonight is next seen after
+  dark, and when a comet is forecast brightest. Time travel to any of it.
+- **Comets** from the IAU Minor Planet Center (two-body Kepler, tails away from the Sun) and
+  **meteor showers** from the IMO calendar (radiants drawn while active).
 
 ## Correctness
 
 Positions aren't eyeballed. `SkyCore` is gated against reference software:
 
 - stars, planets, Sun and Moon against **Stellarium 26.3**: under 0.5′;
-- rise/set/transit and satellite passes against **Skyfield**.
+- rise/set/transit and satellite passes against **Skyfield**;
+- comets against **Skyfield**'s MPC orbits: under 0.05′ over ±1 year, including near-parabolic
+  and hyperbolic orbits; meteor-shower maxima against Skyfield's solar longitude (under a minute).
 
 The fixtures in `SkyCore/Tests/SkyCoreTests/Fixtures` were recorded by the scripts in
 `tools/oracle/`; `swift test` in `SkyCore/` runs the gate. Recording new Stellarium

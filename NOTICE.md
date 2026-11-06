@@ -12,5 +12,10 @@
   group bundled as `Sky/Resources/seed-visual.json` for first launch offline); SATCAT radar cross-sections
   in `satmags.bin` (`tools/gen-satmags.py`).
 
+- **IAU Minor Planet Center** — comet orbital elements (`CometEls.txt`), a snapshot bundled as
+  `comets-seed.txt` (`tools/gen-comets.py`) and refreshed on device.
+- **International Meteor Organization** — the 2026 Meteor Shower Calendar's working list (dates,
+  radiants, drift, ZHR, speeds) transcribed into `MeteorShowers.swift`.
+
 - **IANA time zone database** (public domain) — `Sky/Resources/zones.json` from `zone.tab`
   (`tools/gen-zones.py`): the location guess when GPS is off.
