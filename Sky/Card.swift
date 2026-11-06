@@ -12,6 +12,8 @@ struct DetailCard: View {
     /// The slow parts, worked out once per target and night: tonight's chart, or the next day's passes.
     @State private var tonight: TonightReport?
     @State private var passes: [SatellitePass] = []
+    /// Not up after dark tonight: the next night it is (nil = searched and none within a year).
+    @State private var next: NextChance??
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { t in
@@ -175,7 +177,33 @@ struct DetailCard: View {
                 }
             } else if tonight != nil {
                 Text("Not up after dark tonight.").font(.system(size: 13)).foregroundStyle(.white.opacity(0.6))
+                nextChance(now)
             }
+        }
+    }
+
+    /// When it's next worth looking for, and a way to see it then.
+    @ViewBuilder private func nextChance(_ now: Date) -> some View {
+        switch next {
+        case .some(.some(let n)):
+            let when = Calendar.current.isDate(n.best, equalTo: now, toGranularity: .year)
+                ? DayFormat.date.string(from: n.best) : DayFormat.date.string(from: n.best) + ", " + String(Calendar.current.component(.year, from: n.best))
+            highlight("Next seen after dark from \(when), in the \(n.evening ? "evening" : "morning before dawn"): \(Int(n.altitude.rounded()))° up at \(clock(n.best)).")
+            Button {
+                model.show(target, at: n.best)
+                open = false
+            } label: {
+                Label("Show on \(DayFormat.date.string(from: n.best))", systemImage: "scope").font(.system(size: 13, weight: .semibold))
+                    .padding(.horizontal, 12).padding(.vertical, 7)
+                    .background(Capsule().fill(Color(red: 0.35, green: 0.45, blue: 0.75).opacity(0.5)))
+                    .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+        case .some(.none):
+            Text("Never gets 10° up in a dark sky from here in the next year.")
+                .font(.system(size: 13)).foregroundStyle(.white.opacity(0.6))
+        case .none:
+            Text("Looking ahead…").font(.system(size: 12)).foregroundStyle(.white.opacity(0.4))
         }
     }
 
@@ -205,14 +233,6 @@ struct DetailCard: View {
         return t < 60 ? "\(t) s" : String(format: "%d:%02d", t / 60, t % 60)
     }
 
-    /// "6:43 AM" today, "Fri 6:43 AM" otherwise.
-    private func dayClock(_ d: Date, _ now: Date) -> String {
-        if Calendar.current.isDate(d, inSameDayAs: now) { return clock(d) }
-        let f = DateFormatter()
-        f.dateFormat = "EEE h:mm a"
-        return f.string(from: d)
-    }
-
     private func raDec(_ v: SIMD3<Double>) -> String {
         var ra = atan2(v.y, v.x) * 12 / .pi
         if ra < 0 { ra += 24 }
@@ -234,36 +254,23 @@ struct DetailCard: View {
             }.value
             return
         }
-        guard let r = model.resolve(t, at: now) else { return }
-        let sky = model.sky
+        guard let r = model.resolve(t, at: now), let track = Track.of(t, sky: model.sky) else { return }
         let name = r.name
-        tonight = await Task.detached(priority: .userInitiated) { () -> TonightReport in
+        next = .none
+        let report = await Task.detached(priority: .userInitiated) { () -> TonightReport in
             let night = TonightReport.Night(day: TonightReport.nightOf(now), observer: obs)
-            var position: (SkyFrame) -> Horizontal
-            var horizon = Almanac.horizon(for: nil)
-            switch t {
-            case .body(let b):
-                position = { $0.position(of: b).geometric }
-                horizon = Almanac.horizon(for: b)
-            case .star(let i):
-                let d = SIMD3<Double>(sky.catalog.stars[i].direction)
-                position = { $0.horizontal(star: d) }
-            case .deepSky(let i):
-                let d = DeepSkyObject.all[i].direction
-                position = { $0.horizontal(star: d) }
-            case .constellation(let i):
-                let d = SIMD3<Double>(sky.constellations[i].direction)
-                position = { Horizontal(vector: $0.eqjToHor * d) }
-                horizon = 0
-            case .satellite:
-                return night.report([])
-            }
-            let curve = night.frames.map { position($0).altitude }
-            let events = Almanac.events(from: night.start, to: night.end, horizon: horizon) {
-                position(SkyFrame(date: $0, observer: obs))
+            let curve = night.frames.map { track.position($0).altitude }
+            let events = Almanac.events(from: night.start, to: night.end, horizon: track.horizon) {
+                track.position(SkyFrame(date: $0, observer: obs))
             }
             let item = night.item(t, name, .star, curve: curve, events: events)
             return night.report(item.map { [$0] } ?? [])
         }.value
+        tonight = report
+        if report.items.isEmpty {
+            next = .none
+            let found = await Task.detached(priority: .utility) { NextChance.find(track, observer: obs, after: now) }.value
+            next = .some(found)
+        }
     }
 }

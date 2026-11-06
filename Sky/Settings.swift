@@ -24,6 +24,15 @@ struct SettingsPanel: View {
                 .labelsHidden()
                 Text(lineHint).font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
             }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Faintest stars").font(.system(size: 13, weight: .medium))
+                HStack(spacing: 10) {
+                    Image(systemName: "sparkle").font(.system(size: 10)).foregroundStyle(.white.opacity(0.5))
+                    Slider(value: $model.magOffset, in: SkyModel.magOffsetRange, step: 0.25)
+                    Image(systemName: "sparkles").font(.system(size: 15)).foregroundStyle(.white.opacity(0.8))
+                }
+                Text(magHint).font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+            }
             Toggle("Ecliptic (the Sun's and planets' path)", isOn: $model.showEcliptic).font(.system(size: 13, weight: .medium))
             Toggle("Night mode (red)", isOn: $model.nightMode).font(.system(size: 13, weight: .medium))
             DisclosureGroup("Credits") { credits }
@@ -59,6 +68,16 @@ struct SettingsPanel: View {
         ("SatelliteKit", "Gavin Eadie · MIT License · SGP4 orbit propagation"),
         ("CelesTrak", "Dr. T.S. Kelso (celestrak.org) · satellite orbits and catalog"),
     ]
+
+    private var magHint: String {
+        let limit = min(8.0, 6.3 + model.magOffset)
+        let base = String(format: "Down to magnitude %.1f at full width, deeper as you zoom.", limit)
+        return switch model.magOffset {
+        case ..<(-0.9): base + " A city sky."
+        case ..<0.4: base + " A dark rural sky."
+        default: base + " Binocular faint."
+        }
+    }
 
     private var lineHint: String {
         switch model.lineMode {

@@ -67,6 +67,22 @@ struct SkyView: View {
                         SettingsButton(open: $settings)
                     }
                     if model.timeBarOpen { TimeBar(model: model).padding(.top, 6) }
+                    if model.searchReturn, model.target != nil, !searching {
+                        // back to the results this came from, query and all
+                        Button { searching = true } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "chevron.left").font(.system(size: 12, weight: .bold))
+                                Text(model.searchQuery.isEmpty ? "Search" : "“\(model.searchQuery)”").lineLimit(1)
+                            }
+                            .font(.system(size: 13, weight: .semibold))
+                            .padding(.horizontal, 14).padding(.vertical, 7)
+                            .background(Capsule().fill(Color(red: 0.05, green: 0.09, blue: 0.20).opacity(0.82)))
+                            .overlay(Capsule().stroke(.white.opacity(0.18)))
+                            .foregroundStyle(.white.opacity(0.9))
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, 6)
+                    }
                     Spacer()
                     HStack {
                         SearchButton(open: $searching)

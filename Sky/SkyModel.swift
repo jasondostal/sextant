@@ -33,6 +33,19 @@ final class SkyModel {
         didSet { UserDefaults.standard.set(nightMode, forKey: "nightMode") }
     }
 
+    /// How much deeper (or shallower) than the default the faintest stars go; Settings.
+    var magOffset = UserDefaults.standard.double(forKey: "magOffset") {
+        didSet { UserDefaults.standard.set(magOffset, forKey: "magOffset") }
+    }
+    static let magOffsetRange = -2.0...1.5
+
+    // search: the query survives closing the panel, so "‹ Search" comes back to it
+    var searchQuery = UserDefaults.standard.string(forKey: "search") ?? ""
+    /// Set when the target came from search; shows the way back to the results.
+    var searchReturn = false
+    var recents: [Target] = SkyModel.loadRecents()
+    @ObservationIgnored let hints = HintCache()
+
     @ObservationIgnored private var bodyCache: (Date, Observer, [BodyPosition])?
     @ObservationIgnored private let locator = Locator()
     @ObservationIgnored private let motion = MotionTracker()
@@ -43,6 +56,7 @@ final class SkyModel {
     var satelliteCount = 0
 
     var pointing: Bool { camera.attitude != nil }
+    static let pointFOV = 88.0
 
     /// What search picked; ringed on the sky, arrowed when off screen.
     var target: Target?
@@ -121,7 +135,7 @@ final class SkyModel {
     }
 
     /// Faintest star drawn: deeper as you zoom in, like binoculars.
-    func starLimit(fov: Double) -> Double { min(8.0, 6.3 + 2.0 * log10(max(1, 75 / fov))) }
+    func starLimit(fov: Double) -> Double { min(8.0, 6.3 + magOffset + 2.0 * log10(max(1, 75 / fov))) }
 
     /// Satellites you could actually see: up, sunlit, against a darkening sky,
     /// and bright enough for the zoom.
@@ -139,6 +153,8 @@ final class SkyModel {
     func setPointing(_ on: Bool) {
         if motion.available { UserDefaults.standard.set(on, forKey: "pointMode") }
         if on {
+            // a wider window when you hold the phone up (Star Walk's is ~88°), unless zoomed in on purpose
+            if camera.fov >= 60 { camera.fov = Self.pointFOV }
             motion.onUpdate = { [weak self] b in self?.camera.attitude = b }
             motion.fov = { [weak self] in self?.camera.fov ?? 75 }
             motion.start()
@@ -157,12 +173,14 @@ final class SkyModel {
     /// `fly`: centre the view on it and follow (search); a tap just rings it where it is.
     func select(_ t: Target, fly: Bool = true) {
         target = t
+        searchReturn = false
         following = fly
         flight = fly ? (camera, Date()) : nil
     }
 
     func clearTarget() {
         target = nil
+        searchReturn = false
         following = false
         flight = nil
     }
@@ -213,6 +231,8 @@ final class SkyModel {
         // only a name that starts with it: "ISS" mustn't settle for Meissa before the satellites load
         if case .satellite = t {} else if !r.name.lowercased().hasPrefix(q.lowercased()) { return }
         select(t)
+        // `-searchReturn YES`: as if it came from search (the "‹ Search" pill)
+        if UserDefaults.standard.bool(forKey: "searchReturn") { searchReturn = true }
     }
 
     /// `-az 270 -alt 30 -fov 80 -time 2026-10-29T02:00:00Z -lat 44.52 -lon -89.57`
@@ -220,23 +240,30 @@ final class SkyModel {
     /// `-frozenPoint YES` draws point mode held still at -az/-alt)
     private func applyLaunchArguments() {
         let d = UserDefaults.standard
-        if d.object(forKey: "az") != nil { camera.azimuth = d.double(forKey: "az") }
-        if d.object(forKey: "alt") != nil { camera.altitude = d.double(forKey: "alt") }
-        if d.object(forKey: "fov") != nil { camera.fov = d.double(forKey: "fov") }
+        if let v = Self.launchDouble("az") { camera.azimuth = v }
+        if let v = Self.launchDouble("alt") { camera.altitude = v }
+        if let v = Self.launchDouble("fov") { camera.fov = v }
         // pretend the phone is held still at -az/-alt: point mode's look without the sensors
         if d.bool(forKey: "frozenPoint") {
             let b = camera.basis
             camera.attitude = Camera.Basis(right: b.right, up: b.up, forward: b.forward)
         }
         if let t = d.string(forKey: "time"), let date = ISO8601DateFormatter().date(from: t) { fixedDate = date }
-        if d.object(forKey: "offsetHours") != nil { timeOffset = d.double(forKey: "offsetHours") * 3600 }
+        if let v = Self.launchDouble("offsetHours") { timeOffset = v * 3600 }
         applySelectArgument()
-        if d.object(forKey: "lat") != nil, d.object(forKey: "lon") != nil {
-            observer = Observer(latitude: d.double(forKey: "lat"), longitude: d.double(forKey: "lon"),
-                                height: d.double(forKey: "height"))
+        if let lat = Self.launchDouble("lat"), let lon = Self.launchDouble("lon") {
+            observer = Observer(latitude: lat, longitude: lon, height: Self.launchDouble("height") ?? 0)
             location = .fallback(d.string(forKey: "place") ?? "set by launch arguments")
             argumentsSetPlace = true
         }
+    }
+
+    /// A numeric launch argument. Read from the command line itself, because the
+    /// defaults system takes `-lon -89.57` for two flags and drops the negative value.
+    static func launchDouble(_ key: String) -> Double? {
+        let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "-" + key), i + 1 < args.count, let v = Double(args[i + 1]) { return v }
+        return UserDefaults.standard.object(forKey: key) != nil ? UserDefaults.standard.double(forKey: key) : nil
     }
 }
 

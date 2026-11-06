@@ -61,27 +61,37 @@ extension SkyModel {
 
     /// Everything searchable whose name matches, best first: names that start
     /// with the query, then by kind (sky objects before the satellite crowd).
-    func search(_ query: String, limit: Int = 60) -> [Target] {
+    func search(_ query: String, scope: SearchScope = .all, limit: Int = 60) -> [Target] {
+        rankedSearch(query, scope: scope).prefix(limit).map(\.1)
+    }
+
+    /// The ranked hits behind `search`, for grouping by kind.
+    func rankedSearch(_ query: String, scope: SearchScope = .all) -> [(Int, Target)] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !q.isEmpty else { return suggestions() }
+        guard !q.isEmpty else { return [] }
         var hits: [(Int, Target)] = []
         func rank(_ name: String, _ base: Int, _ t: Target) {
             let n = name.lowercased()
-            if n.hasPrefix(q) { hits.append((base, t)) } else if n.contains(q) { hits.append((base + 100, t)) }
+            if n.hasPrefix(q) { hits.append((base, t)) }
+            else if n.contains(" " + q) || n.contains("(" + q) { hits.append((base + 50, t)) }   // word start: "Andromeda Galaxy" for "gal"
+            else if n.contains(q) { hits.append((base + 100, t)) }
         }
-        for b in Body.allCases { rank(b.rawValue, 0, .body(b)) }
-        for (i, c) in sky.constellations.enumerated() { rank(c.name, 10, .constellation(i)) }
-        for (i, d) in DeepSkyObject.all.enumerated() { rank(d.name + " " + d.designation, 15, .deepSky(i)) }
-        for (i, n) in sky.catalog.names.sorted(by: { $0.key < $1.key }) { rank(n, 20, .star(i)) }
-        let numeric = q.allSatisfy(\.isNumber)
-        for s in satellites.all {
-            let shown = Labels.displayName(s.name)
-            // "ISS" / "Tiangong" / "Hubble" rank with the planets; the crowd ranks last
-            rank(shown == s.name ? s.name : shown + " " + s.name, shown == s.name ? 40 : 5, .satellite(s.id))
-            if numeric, String(s.id) == q { hits.append((1, .satellite(s.id))) }
-            if hits.count > 4000 { break }
+        let want = { (s: SearchScope) in scope == .all || scope == s }
+        if want(.solarSystem) { for b in Body.allCases { rank(b.rawValue, 0, .body(b)) } }
+        if want(.constellations) { for (i, c) in sky.constellations.enumerated() { rank(c.name, 10, .constellation(i)) } }
+        if want(.deepSky) { for (i, d) in DeepSkyObject.all.enumerated() { rank(d.name + " " + d.designation, 15, .deepSky(i)) } }
+        if want(.stars) { for (i, n) in sky.catalog.names.sorted(by: { $0.key < $1.key }) { rank(n, 20, .star(i)) } }
+        if want(.satellites) {
+            let numeric = q.allSatisfy(\.isNumber)
+            for s in satellites.all {
+                let shown = Labels.displayName(s.name)
+                // "ISS" / "Tiangong" / "Hubble" rank with the planets; the crowd ranks last
+                rank(shown == s.name ? s.name : shown + " " + s.name, shown == s.name ? 40 : 5, .satellite(s.id))
+                if numeric, String(s.id) == q { hits.append((1, .satellite(s.id))) }
+                if hits.count > 4000 { break }
+            }
         }
-        return hits.sorted { $0.0 < $1.0 }.prefix(limit).map(\.1)
+        return hits.sorted { $0.0 < $1.0 }
     }
 
     /// Lit satellites up right now, brightest first: "what's that moving?"
@@ -104,23 +114,98 @@ extension SkyModel {
         t += [25544, 48274, 20580].filter { satellites.satellite(id: $0) != nil }.map { .satellite($0) }
         t += sky.catalog.names.keys.sorted().prefix(12).map { .star($0) }
         t += DeepSkyObject.all.indices.filter { DeepSkyObject.all[$0].magnitude < 4 }.map { .deepSky($0) }
-        return t.sorted { (resolve($0, at: date)?.horizontal.altitude ?? -90 > 0 ? 0 : 1) <
-                          (resolve($1, at: date)?.horizontal.altitude ?? -90 > 0 ? 0 : 1) }
+        return upFirst(t, date)
     }
+
+    /// Browsing one kind with nothing typed: all of it worth showing, what's up first.
+    func browse(_ scope: SearchScope) -> [Target] {
+        let date = now
+        switch scope {
+        case .all:
+            return suggestions()
+        case .solarSystem:
+            return upFirst(Body.allCases.map { .body($0) }, date)
+        case .satellites:
+            // what's lit overhead, the famous three, then the brightest of the rest
+            var t = overheadNow(limit: 12)
+            t += [25544, 48274, 20580].filter { satellites.satellite(id: $0) != nil }.map { .satellite($0) }
+            t += satellites.all.filter { $0.standardMagnitude <= 3 }.sorted { $0.standardMagnitude < $1.standardMagnitude }
+                .prefix(30).map { .satellite($0.id) }
+            var seen = Set<Target>()
+            return t.filter { seen.insert($0).inserted }
+        case .stars:
+            let cat = sky.catalog
+            return upFirst(cat.names.keys.sorted { cat.stars[$0].magnitude < cat.stars[$1].magnitude }.prefix(80).map { .star($0) }, date)
+        case .deepSky:
+            return upFirst(DeepSkyObject.all.indices.sorted { DeepSkyObject.all[$0].magnitude < DeepSkyObject.all[$1].magnitude }
+                .map { .deepSky($0) }, date)
+        case .constellations:
+            let f = frame(at: date)
+            return sky.constellations.indices
+                .map { ($0, Horizontal(vector: f.eqjToHor * SIMD3<Double>(sky.constellations[$0].direction)).altitude) }
+                .sorted { $0.1 > $1.1 }
+                .map { .constellation($0.0) }
+        }
+    }
+
+    /// Up before down, otherwise in the order given.
+    private func upFirst(_ t: [Target], _ date: Date) -> [Target] {
+        let up = t.map { (resolve($0, at: date)?.horizontal.altitude ?? -90) > 0 }
+        return zip(t, up).enumerated().sorted { a, b in
+            a.element.1 != b.element.1 ? a.element.1 : a.offset < b.offset
+        }.map(\.element.0)
+    }
+}
+
+/// One kind's hits in the All view, ranked by its best match.
+struct SearchGroup {
+    let scope: SearchScope
+    let best: Int
+    let targets: [Target]
+
+    static func make(_ ranked: [(Int, Target)]) -> [SearchGroup] {
+        var byScope: [SearchScope: [(Int, Target)]] = [:]
+        for hit in ranked { byScope[SearchScope(hit.1), default: []].append(hit) }
+        let groups: [SearchGroup] = byScope.map { key, hits in
+            SearchGroup(scope: key, best: hits[0].0, targets: hits.map { $0.1 })
+        }
+        return groups.sorted { a, b in
+            a.best != b.best ? a.best < b.best : a.scope.rawValue < b.scope.rawValue
+        }
+    }
+}
+
+/// The chips under the search field.
+enum SearchScope: String, CaseIterable, Identifiable {
+    case all = "All", solarSystem = "Solar system", satellites = "Satellites", stars = "Stars"
+    case deepSky = "Deep sky", constellations = "Constellations"
+    var id: String { rawValue }
+
+    init(_ t: Target) {
+        switch t {
+        case .body: self = .solarSystem
+        case .satellite: self = .satellites
+        case .star: self = .stars
+        case .deepSky: self = .deepSky
+        case .constellation: self = .constellations
+        }
+    }
+
+    var heading: String { rawValue.uppercased() }
 }
 
 /// Opened by the magnifying glass, closed by its X (or by choosing a result).
 struct SearchPanel: View {
-    let model: SkyModel
+    @Bindable var model: SkyModel
     @Binding var open: Bool
-    @State private var query = UserDefaults.standard.string(forKey: "search") ?? ""
+    @State private var scope: SearchScope = .all
     @FocusState private var focused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.white.opacity(0.6))
-                TextField("Stars, planets, constellations, satellites", text: $query)
+                TextField("Stars, planets, constellations, satellites", text: $model.searchQuery)
                     .textFieldStyle(.plain)
                     .focused($focused)
                     .autocorrectionDisabled()
@@ -128,6 +213,12 @@ struct SearchPanel: View {
                     .textInputAutocapitalization(.never)
                     #endif
                     .foregroundStyle(.white)
+                if !model.searchQuery.isEmpty {
+                    Button { model.searchQuery = "" } label: {
+                        Image(systemName: "delete.left").font(.system(size: 16)).foregroundStyle(.white.opacity(0.5))
+                    }
+                    .buttonStyle(.plain)
+                }
                 Button { open = false } label: {
                     Image(systemName: "xmark.circle.fill").font(.system(size: 22)).foregroundStyle(.white.opacity(0.7))
                 }
@@ -135,7 +226,9 @@ struct SearchPanel: View {
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
             .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
-            .padding(14)
+            .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 8)
+
+            chips.padding(.bottom, 8)
 
             // re-run the search when satellite data arrives (it loads in the background)
             let _ = model.satelliteCount
@@ -144,21 +237,9 @@ struct SearchPanel: View {
                 let date = model.now
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        if query.isEmpty {
-                            let overhead = model.overheadNow()
-                            header("OVERHEAD NOW")
-                            if overhead.isEmpty {
-                                Text("Nothing lit overhead. Satellites shine in the hours after dusk and before dawn, when the sky is dark but they're still in sunlight.")
-                                    .font(.system(size: 12)).foregroundStyle(.white.opacity(0.45))
-                                    .padding(.horizontal, 18).padding(.bottom, 10)
-                            }
-                            results(overhead, date)
-                            header("UP TONIGHT").padding(.top, 8)
-                            results(model.suggestions().filter { !overhead.contains($0) }, date)
-                        } else {
-                            results(model.search(query), date)
-                        }
+                        content(date)
                     }
+                    .padding(.bottom, 8)
                 }
             }
         }
@@ -169,7 +250,82 @@ struct SearchPanel: View {
         #if os(macOS)
         .padding(.top, 28)        // clear the title bar
         #endif
-        .onAppear { focused = true }
+        .onAppear {
+            if let s = UserDefaults.standard.string(forKey: "searchScope"), let sc = SearchScope(rawValue: s) { scope = sc }
+            // coming back to results: don't throw the keyboard over them
+            focused = model.searchQuery.isEmpty
+        }
+    }
+
+    private var chips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(SearchScope.allCases) { s in
+                    Button { scope = s } label: {
+                        Text(s.rawValue).font(.system(size: 13, weight: .medium))
+                            .padding(.horizontal, 12).padding(.vertical, 6)
+                            .background(Capsule().fill(scope == s ? Color(red: 0.35, green: 0.45, blue: 0.75).opacity(0.6)
+                                                                   : Color.white.opacity(0.07)))
+                            .foregroundStyle(.white.opacity(scope == s ? 1 : 0.7))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 16)
+        }
+    }
+
+    @ViewBuilder private func content(_ date: Date) -> some View {
+        let q = model.searchQuery.trimmingCharacters(in: .whitespaces)
+        if q.isEmpty && scope == .all {
+            let overhead = model.overheadNow()
+            header("OVERHEAD NOW")
+            if overhead.isEmpty {
+                note("Nothing lit overhead. Satellites shine in the hours after dusk and before dawn, when the sky is dark but they're still in sunlight.")
+            }
+            results(overhead, date)
+            if !model.recents.isEmpty {
+                HStack {
+                    header("RECENT")
+                    Spacer()
+                    Button("Clear") { model.clearRecents() }
+                        .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(.white.opacity(0.45))
+                        .padding(.trailing, 18).padding(.bottom, 6)
+                }
+                .padding(.top, 8)
+                results(model.recents, date)
+            }
+            header("UP TONIGHT").padding(.top, 8)
+            results(model.suggestions().filter { !overhead.contains($0) && !model.recents.contains($0) }, date)
+        } else if q.isEmpty {
+            results(model.browse(scope), date)
+        } else if scope != .all {
+            let hits = model.search(q, scope: scope, limit: scope == .satellites ? 100 : 60)
+            if hits.isEmpty { note("Nothing called \"\(q)\" in \(scope.rawValue.lowercased()).") }
+            results(hits, date)
+        } else {
+            grouped(q, date)
+        }
+    }
+
+    /// All kinds at once: a few of each, kinds in the order of their best match.
+    @ViewBuilder private func grouped(_ q: String, _ date: Date) -> some View {
+        let groups = SearchGroup.make(model.rankedSearch(q))
+        if groups.isEmpty { note("Nothing called \"\(q)\".") }
+        ForEach(Array(groups.enumerated()), id: \.element.scope) { i, g in
+            let shown = groups.count == 1 ? 60 : 4
+            header(g.scope.heading).padding(.top, i == 0 ? 0 : 8)
+            results(Array(g.targets.prefix(shown)), date)
+            if g.targets.count > shown {
+                Button { scope = g.scope } label: {
+                    Text(g.targets.count > 4000 ? "More \(g.scope.rawValue.lowercased()) ›" : "All \(g.targets.count) \(g.scope.rawValue.lowercased()) ›")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Color(red: 0.55, green: 0.65, blue: 0.95))
+                        .padding(.horizontal, 18).padding(.vertical, 6)
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 
     private func header(_ text: String) -> some View {
@@ -177,19 +333,27 @@ struct SearchPanel: View {
             .foregroundStyle(.white.opacity(0.45)).padding(.horizontal, 18).padding(.bottom, 6)
     }
 
+    private func note(_ text: String) -> some View {
+        Text(text).font(.system(size: 12)).foregroundStyle(.white.opacity(0.45))
+            .padding(.horizontal, 18).padding(.bottom, 10)
+    }
+
     @ViewBuilder private func results(_ targets: [Target], _ date: Date) -> some View {
         ForEach(targets, id: \.self) { t in
             if let r = model.resolve(t, at: date) {
                 Button {
+                    model.addRecent(t)
                     model.select(t)
+                    model.searchReturn = true
+                    UserDefaults.standard.set(scope.rawValue, forKey: "searchScope")
                     open = false
-                } label: { row(r) }
+                } label: { row(r, hint: model.hints.text(for: t, model: model)) }
                 .buttonStyle(.plain)
             }
         }
     }
 
-    private func row(_ r: Resolved) -> some View {
+    private func row(_ r: Resolved, hint: String?) -> some View {
         let up = r.horizontal.altitude > 0
         let color: Color = switch r.kind {
         case .satellite?: Color(red: 0.31, green: 0.80, blue: 0.81)
@@ -203,14 +367,20 @@ struct SearchPanel: View {
                 Text(r.name).font(.system(size: 16, weight: .medium)).foregroundStyle(color)
                 Text(r.detail + (r.magnitude.map { r.kind == .satellite ? "" : String(format: " · mag %.1f", $0) } ?? ""))
                     .font(.system(size: 12)).foregroundStyle(.white.opacity(0.5))
+                    .lineLimit(1)
             }
             Spacer()
-            Text(up ? String(format: "%.0f° up, %@", r.horizontal.altitude, compassPoint(r.horizontal.azimuth))
-                    : "below horizon")
-                .font(.system(size: 13, weight: .medium).monospacedDigit())
-                .foregroundStyle(up ? .white.opacity(0.8) : .white.opacity(0.35))
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(up ? String(format: "%.0f° up, %@", r.horizontal.altitude, compassPoint(r.horizontal.azimuth))
+                        : "below horizon")
+                    .font(.system(size: 13, weight: .medium).monospacedDigit())
+                    .foregroundStyle(up ? .white.opacity(0.8) : .white.opacity(0.35))
+                Text(hint ?? " ")
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(.white.opacity(hint == "visible now" ? 0.9 : 0.45))
+            }
         }
-        .padding(.horizontal, 18).padding(.vertical, 10)
+        .padding(.horizontal, 18).padding(.vertical, 9)
         .contentShape(Rectangle())
     }
 }

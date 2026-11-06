@@ -150,12 +150,12 @@ fragment float4 groundFragment(ScreenOut in [[stage_in]], constant Uniforms &u [
     // the ridge is solid; below the true horizon is Star Walk's dark lake,
     // translucent so whatever has set still shows through, dimmed
     float lake = smoothstep(-aa, aa, -alt);
-    float3 ridge = mix(float3(0.20, 0.27, 0.18), float3(0.031, 0.043, 0.125), u.darkness);
-    float3 water = mix(float3(0.10, 0.16, 0.22), float3(0.012, 0.03, 0.19), u.darkness);
+    float3 ridge = mix(float3(0.20, 0.27, 0.18), float3(0.085, 0.105, 0.19), u.darkness);   // night: Star Walk's blue-grey land, not a black cut
+    float3 water = mix(float3(0.10, 0.16, 0.22), float3(0.04, 0.07, 0.22), u.darkness);
     float3 c = mix(ridge, water, lake);
     float a = mix(1.0, 0.55, lake);
     // a faint lit rim along the top of the ridge
-    c += float3(0.05, 0.06, 0.12) * (1.0 - smoothstep(0.0, 4.0 * aa, edge - alt)) * (1.0 - lake);
+    c += float3(0.07, 0.08, 0.14) * (1.0 - smoothstep(0.0, 4.0 * aa, edge - alt)) * (1.0 - lake);
     return float4(c, cover * a * fade);      // fade < 1 while looking through the Earth at a target
 }
 
