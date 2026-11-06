@@ -7,3 +7,4 @@ tools/oracle/.venv/
 build/
 tools/asc/.venv/
 __pycache__/
+docs/oracle/
