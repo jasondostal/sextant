@@ -20,6 +20,9 @@ targets:
       path: Sky/Info.plist
       properties:
         CFBundleDisplayName: Sextant
+        # from MARKETING_VERSION / CURRENT_PROJECT_VERSION below (XcodeGen otherwise writes a literal 1.0 / 1)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSLocationWhenInUseUsageDescription: Sextant puts the stars and satellites where they are from where you're standing. Your location stays on your phone.
         NSMotionUsageDescription: Sextant follows your phone as you point it at the sky.
         UILaunchScreen: {}
