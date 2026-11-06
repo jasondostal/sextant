@@ -96,8 +96,12 @@ struct SettingsButton: View {
 
     var body: some View {
         Button { open = true } label: {
-            Image(systemName: "gearshape").font(.system(size: 14, weight: .semibold)).foregroundStyle(.white.opacity(0.7))
-                .frame(width: 30, height: 24).contentShape(Rectangle())
+            // matches the readout chips: a round button, not a speck
+            Image(systemName: "gearshape").font(.system(size: 15, weight: .semibold)).foregroundStyle(.white.opacity(0.9))
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(Color(red: 0.05, green: 0.09, blue: 0.20).opacity(0.78)))
+                .overlay(Circle().stroke(.white.opacity(0.14)))
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .focusEffectDisabled()

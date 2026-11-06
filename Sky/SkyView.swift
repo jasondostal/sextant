@@ -62,7 +62,7 @@ struct SkyView: View {
                     .nightVision(model.nightMode)
                 }
                 VStack {
-                    HStack(alignment: .top) {
+                    HStack(alignment: .center, spacing: 8) {
                         Readout(model: model)
                         SettingsButton(open: $settings)
                     }
@@ -359,9 +359,9 @@ struct Labels: View {
             let frame = model.frame(at: date)
             let visible = model.objects(at: date, proj: proj)
             #if os(macOS)
-            var topBand: CGFloat = 70          // title bar + readout
+            var topBand: CGFloat = 80          // title bar + readout chips
             #else
-            var topBand: CGFloat = 40          // readout
+            var topBand: CGFloat = 52          // readout chips
             #endif
             if model.timeBarOpen { topBand += 48 }
 
@@ -681,58 +681,69 @@ struct Readout: View {
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { t in
-            // the full line in landscape; portrait gets the short forms, never a wrap
+            // the full chips in landscape; portrait gets the short forms, never a wrap
             ViewThatFits(in: .horizontal) {
                 line(t.date, compact: false)
                 line(t.date, compact: true)
             }
-            .font(.system(size: 12, weight: .medium).monospacedDigit())
+            .font(.system(size: 14, weight: .semibold).monospacedDigit())
             .lineLimit(1)
         }
     }
 
     private func line(_ now: Date, compact: Bool) -> some View {
-        HStack(spacing: compact ? 10 : 14) {
-            place(compact)
+        HStack(spacing: 8) {
+            chip { place(compact) }
             Button { model.timeBarOpen.toggle() } label: {
-                Label(timeText(model.date(at: now), compact: compact), systemImage: "clock")
-                    .foregroundStyle(model.timeTraveling ? Self.amber : .white.opacity(0.75))
+                chip(tint: model.timeTraveling ? Self.amber : nil) {
+                    Label(timeText(model.date(at: now), compact: compact), systemImage: "clock")
+                        .foregroundStyle(model.timeTraveling ? Self.amber : .white.opacity(0.9))
+                }
             }
             .buttonStyle(.plain)
             .focusEffectDisabled()
-            Spacer(minLength: 6)
-            satellites(now, compact)
+            Spacer(minLength: 4)
+            chip { satellites(now, compact) }
             if !compact {
-                Text(String(format: "%.0f° FOV", model.camera.fov)).foregroundStyle(.white.opacity(0.5))
+                chip { Text(String(format: "%.0f°", model.camera.fov)).foregroundStyle(.white.opacity(0.6)) }
             }
         }
         .frame(maxWidth: .infinity)
     }
 
+    /// The bottom buttons' look, at readout size: dark glass, a hairline, a tint when it matters.
+    private func chip<C: View>(tint: Color? = nil, @ViewBuilder _ content: () -> C) -> some View {
+        content()
+            .padding(.horizontal, 11).frame(height: 32)
+            .background(Capsule().fill((tint ?? Color(red: 0.05, green: 0.09, blue: 0.20)).opacity(tint == nil ? 0.78 : 0.18)))
+            .overlay(Capsule().stroke((tint ?? .white).opacity(tint == nil ? 0.14 : 0.5)))
+    }
+
     /// Orbit data age: amber after 3 days, when predictions start drifting.
     @ViewBuilder private func satellites(_ now: Date, _ compact: Bool) -> some View {
         if model.satellitesFetched != nil, !model.satellitesValid(at: model.date(at: now)) {
-            Text(compact ? "sats hidden" : "sats hidden · orbits don't reach this date").foregroundStyle(Self.amber)
+            Label(compact ? "hidden" : "sats hidden · orbits don't reach this date", systemImage: "antenna.radiowaves.left.and.right.slash")
+                .foregroundStyle(Self.amber)
         } else if let at = model.satellitesFetched {
             let hours = now.timeIntervalSince(at) / 3600
             let age = hours < 1 ? "fresh" : hours < 48 ? "\(Int(hours)) h" + (compact ? "" : " old") : "\(Int(hours / 24)) d" + (compact ? "" : " old")
-            Text((compact ? "sats · " : "\(model.satelliteCount) sats · ") + age)
-                .foregroundStyle(hours > 72 ? Self.amber : .white.opacity(0.5))
+            Label((compact ? "" : "\(model.satelliteCount) sats · ") + age, systemImage: "antenna.radiowaves.left.and.right")
+                .foregroundStyle(hours > 72 ? Self.amber : .white.opacity(0.65))
         } else {
-            Text(compact ? "no sats" : "no satellite data").foregroundStyle(Self.amber)
+            Label(compact ? "none" : "no satellite data", systemImage: "antenna.radiowaves.left.and.right.slash").foregroundStyle(Self.amber)
         }
     }
 
     @ViewBuilder private func place(_ compact: Bool) -> some View {
         switch model.location {
         case .fallback(let name):
-            Text(compact ? "\(name)?" : "\(name) · no GPS").foregroundStyle(Self.amber)
+            Label(compact ? "\(name)?" : "\(name) · no GPS", systemImage: "location.slash").foregroundStyle(Self.amber)
         case .gps(let at):
             let age = Date().timeIntervalSince(at)
-            Text(compact ? "GPS" + (age < 120 ? "" : " \(Int(age / 60))m")
-                         : String(format: "GPS %.2f°, %.2f° · %@", model.observer.latitude, model.observer.longitude,
-                                  age < 120 ? "now" : "\(Int(age / 60)) min ago"))
-                .foregroundStyle(age > 6 * 3600 ? Self.amber : .white.opacity(0.75))
+            Label(compact ? "GPS" + (age < 120 ? "" : " \(Int(age / 60))m")
+                          : String(format: "GPS %.2f°, %.2f° · %@", model.observer.latitude, model.observer.longitude,
+                                   age < 120 ? "now" : "\(Int(age / 60)) min ago"), systemImage: "location.fill")
+                .foregroundStyle(age > 6 * 3600 ? Self.amber : .white.opacity(0.9))
         }
     }
 

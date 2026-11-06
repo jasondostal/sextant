@@ -204,6 +204,20 @@ struct SearchGroup {
     }
 }
 
+/// How results are ordered (the menu beside the search field).
+enum SearchSort: String, CaseIterable, Identifiable {
+    case relevance = "Best match", brightest = "Brightest", highest = "Highest now", name = "A–Z"
+    var id: String { rawValue }
+    var icon: String {
+        switch self {
+        case .relevance: "text.magnifyingglass"
+        case .brightest: "sun.max"
+        case .highest: "arrow.up.to.line"
+        case .name: "textformat"
+        }
+    }
+}
+
 /// The chips under the search field.
 enum SearchScope: String, CaseIterable, Identifiable {
     case all = "All", solarSystem = "Solar system", satellites = "Satellites", stars = "Stars"
@@ -231,6 +245,11 @@ struct SearchPanel: View {
     @Binding var open: Bool
     @State private var scope: SearchScope = .all
     @FocusState private var focused: Bool
+    @AppStorage("searchSort") private var sort: SearchSort = .relevance
+    @AppStorage("searchUpOnly") private var upOnly = false
+    @AppStorage("searchNakedEye") private var nakedEye = false
+
+    private var arranging: Bool { sort != .relevance || upOnly || nakedEye }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -250,6 +269,7 @@ struct SearchPanel: View {
                     }
                     .buttonStyle(.plain)
                 }
+                arrangeMenu
                 Button { open = false } label: {
                     Image(systemName: "xmark.circle.fill").font(.system(size: 22)).foregroundStyle(.white.opacity(0.7))
                 }
@@ -259,7 +279,8 @@ struct SearchPanel: View {
             .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
             .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 8)
 
-            chips.padding(.bottom, 8)
+            chips.padding(.bottom, arranging ? 4 : 8)
+            if arranging { arrangeSummary.padding(.bottom, 6) }
 
             // re-run the search when satellite data arrives (it loads in the background)
             let _ = model.satelliteCount
@@ -306,6 +327,59 @@ struct SearchPanel: View {
         }
     }
 
+    /// Sort and filter, one button: the search field stays the only thing at the top.
+    private var arrangeMenu: some View {
+        Menu {
+            Picker("Sort", selection: $sort) {
+                ForEach(SearchSort.allCases) { Label($0.rawValue, systemImage: $0.icon).tag($0) }
+            }
+            Section("Show") {
+                Toggle("Up now only", isOn: $upOnly)
+                Toggle("Naked-eye only (mag 6 or brighter)", isOn: $nakedEye)
+            }
+        } label: {
+            Image(systemName: arranging ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                .font(.system(size: 21))
+                .foregroundStyle(arranging ? Color(red: 0.55, green: 0.65, blue: 0.95) : .white.opacity(0.6))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
+    /// What's on, and a way to turn it all off.
+    private var arrangeSummary: some View {
+        HStack(spacing: 6) {
+            Text(([sort == .relevance ? nil : sort.rawValue.lowercased() + " first",
+                   upOnly ? "up now" : nil, nakedEye ? "naked-eye" : nil] as [String?]).compactMap { $0 }.joined(separator: " · "))
+                .font(.system(size: 12, weight: .medium)).foregroundStyle(Color(red: 0.55, green: 0.65, blue: 0.95))
+            Button {
+                sort = .relevance; upOnly = false; nakedEye = false
+            } label: {
+                Image(systemName: "xmark.circle.fill").font(.system(size: 13)).foregroundStyle(.white.opacity(0.45))
+            }
+            .buttonStyle(.plain)
+            Spacer()
+        }
+        .padding(.horizontal, 18)
+    }
+
+    /// The menu's choices applied to a list. Satellites can number thousands; only
+    /// the best 300 matches are considered, which is all anyone scrolls.
+    private func arrange(_ targets: [Target], _ date: Date) -> [Target] {
+        guard arranging else { return targets }
+        let rows = targets.prefix(300).compactMap { t in model.resolve(t, at: date).map { (t, $0) } }
+            .filter { _, r in (!upOnly || r.horizontal.altitude > 0) && (!nakedEye || (r.magnitude ?? -99) <= 6) }
+        let sorted: [(Target, Resolved)] = switch sort {
+        case .relevance: rows
+        case .brightest: rows.sorted { ($0.1.magnitude ?? 99) < ($1.1.magnitude ?? 99) }
+        case .highest: rows.sorted { $0.1.horizontal.altitude > $1.1.horizontal.altitude }
+        case .name: rows.sorted { $0.1.name.localizedStandardCompare($1.1.name) == .orderedAscending }
+        }
+        return sorted.map(\.0)
+    }
+
     @ViewBuilder private func content(_ date: Date) -> some View {
         let q = model.searchQuery.trimmingCharacters(in: .whitespaces)
         if q.isEmpty && scope == .all {
@@ -327,11 +401,13 @@ struct SearchPanel: View {
                 results(model.recents, date)
             }
             header("UP TONIGHT").padding(.top, 8)
-            results(model.suggestions().filter { !overhead.contains($0) && !model.recents.contains($0) }, date)
+            results(arrange(model.suggestions().filter { !overhead.contains($0) && !model.recents.contains($0) }, date), date)
         } else if q.isEmpty {
-            results(model.browse(scope), date)
+            let list = arrange(model.browse(scope), date)
+            if list.isEmpty { note("Nothing in \(scope.rawValue.lowercased()) matches the filters.") }
+            results(list, date)
         } else if scope != .all {
-            let hits = model.search(q, scope: scope, limit: scope == .satellites ? 100 : 60)
+            let hits = arrange(model.search(q, scope: scope, limit: arranging ? 300 : scope == .satellites ? 100 : 60), date)
             if hits.isEmpty { note("Nothing called \"\(q)\" in \(scope.rawValue.lowercased()).") }
             results(hits, date)
         } else {
@@ -341,7 +417,10 @@ struct SearchPanel: View {
 
     /// All kinds at once: a few of each, kinds in the order of their best match.
     @ViewBuilder private func grouped(_ q: String, _ date: Date) -> some View {
-        let groups = SearchGroup.make(model.rankedSearch(q))
+        let groups = SearchGroup.make(model.rankedSearch(q)).compactMap { g -> SearchGroup? in
+            let t = arrange(g.targets, model.now)
+            return t.isEmpty ? nil : SearchGroup(scope: g.scope, best: g.best, targets: arranging ? t : g.targets)
+        }
         if groups.isEmpty { note("Nothing called \"\(q)\".") }
         ForEach(Array(groups.enumerated()), id: \.element.scope) { i, g in
             let shown = groups.count == 1 ? 60 : 4
