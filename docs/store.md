@@ -62,6 +62,39 @@ No account, no ads, no tracking, no analytics. Your location is used on your pho
 - Price: Free
 - Copyright: `2026 Jason Dostal`
 
+## Version 1.1 (build 2)
+
+### What's New (4000)
+
+Comets, meteor showers, and a much better search.
+
+• Comets: orbits from the Minor Planet Center, refreshed weekly. Bright ones appear on the sky with a tail pointing away from the Sun, and every comet's card says when it will be at its brightest.
+• Meteor showers: all 37 on the International Meteor Organization's calendar. Radiants are marked while a shower is on, and near a good peak Visible tonight tells you how many an hour, how much the Moon will get in the way, and when the radiant is up.
+• Search: browse by kind, results grouped, sort by brightness or by how high things are, show only what's up now or what you can see without binoculars. Recent searches, and a button back to your results. Every row says when it next rises, sets or passes over.
+• Next chance: anything that isn't up tonight tells you the next night it is, and takes you there.
+• A clearer top bar that stays out of the Dynamic Island, a wider view in point mode, and a slider for how faint the stars go.
+
+### Keywords (94)
+
+`ISS,starlink,planets,comet,meteor,shower,constellation,astronomy,stargazing,space station,moon`
+
+(drops `sky`, already in the name, and `telescope`; adds comet, meteor, shower.)
+
+### Description changes
+
+Add after TONIGHT:
+
+COMETS AND METEOR SHOWERS
+• Comets from the Minor Planet Center's orbits, with tails pointing away from the Sun and a forecast of when each is brightest
+• All 37 meteor showers on the IMO calendar: radiants on the sky while they're active, peak nights in Visible tonight with the Moon's interference
+• For anything that isn't up tonight: the next night it is
+
+Replace the search line in THE SKY with:
+
+• Search stars, planets, comets, meteor showers, constellations, deep-sky objects and satellites (by name or NORAD number); sort by brightness or height, filter to what's up now
+
+Add to ACCURATE: "Comet positions are tested against Skyfield to under a tenth of an arcminute."
+
 ## App Privacy (the "nutrition label")
 
 - "Do you or your third-party partners collect data from this app?" → **No** → "Data Not Collected".
