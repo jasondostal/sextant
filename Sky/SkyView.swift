@@ -16,17 +16,32 @@ struct SkyView: View {
     @State private var settings = UserDefaults.standard.bool(forKey: "settings")
 
     var body: some View {
+        // Everything is edge to edge, as in 1.0 (the ZStack ignores the safe area). The Dynamic Island insets come
+        // from this outer reader, which doesn't ignore it: SwiftUI's own value, updated on rotation. 1.1 read
+        // UIWindow.safeAreaInsets during SwiftUI updates instead, and the view stopped re-laying out on rotation
+        // (stuck at its launch size, clipped to a square).
+        GeometryReader { outer in
+            content(insets: outer.safeAreaInsets)
+                .ignoresSafeArea(.container)
+        }
+        .background(Color.black.ignoresSafeArea())
+    }
+
+    private func content(insets: EdgeInsets) -> some View {
         ZStack {
-            sky
-            if searching {
-                SearchPanel(model: model, open: $searching).nightVision(model.nightMode)
+            sky(insets: insets)
+            Group {
+                if searching {
+                    SearchPanel(model: model, open: $searching).nightVision(model.nightMode)
+                }
+                if tonight {
+                    TonightPanel(model: model, open: $tonight).nightVision(model.nightMode)
+                }
+                if settings {
+                    SettingsPanel(model: model, open: $settings).nightVision(model.nightMode)
+                }
             }
-            if tonight {
-                TonightPanel(model: model, open: $tonight).nightVision(model.nightMode)
-            }
-            if settings {
-                SettingsPanel(model: model, open: $settings).nightVision(model.nightMode)
-            }
+            .padding(insets)   // the panels stay clear of the island and the home indicator
             if card, let t = model.target {
                 VStack {
                     Spacer()
@@ -38,17 +53,17 @@ struct SkyView: View {
                 #if os(macOS)
                 .padding(.top, 28)
                 #endif
+                .padding(insets)
             }
         }
-        .background(Color.black.ignoresSafeArea())
     }
 
-    private var sky: some View {
+    private func sky(insets: EdgeInsets) -> some View {
         GeometryReader { geo in
             ZStack {
                 MetalSky(model: model)
                 TimelineView(.animation) { timeline in
-                    Labels(model: model, date: model.date(at: timeline.date), frameTime: timeline.date)
+                    Labels(model: model, date: model.date(at: timeline.date), frameTime: timeline.date, topInset: insets.top)
                 }
                 .allowsHitTesting(false)
                 .nightVision(model.nightMode)
@@ -110,12 +125,12 @@ struct SkyView: View {
                 }
                 // the sky is edge to edge, the controls aren't: clear of the Dynamic Island
                 // (top in portrait, one side in landscape) and the rounded corners
-                .padding(.leading, max(20, SafeArea.insets.leading))
-                .padding(.trailing, max(20, SafeArea.insets.trailing))
+                .padding(.leading, max(20, insets.leading))
+                .padding(.trailing, max(20, insets.trailing))
                 #if os(macOS)
                 .padding(.top, 36)        // clear the title bar
                 #else
-                .padding(.top, max(12, SafeArea.insets.top))
+                .padding(.top, max(12, insets.top))
                 #endif
                 .padding(.bottom, 18)
                 .nightVision(model.nightMode)
@@ -353,6 +368,8 @@ struct Labels: View {
     let date: Date
     /// The wall clock, so a frozen sky still redraws when satellite sweeps land.
     var frameTime: Date = .distantPast
+    /// The safe area's top (the Dynamic Island in portrait): labels keep out of the band below it.
+    var topInset: CGFloat = 0
 
     var body: some View {
         Canvas { gc, size in
@@ -363,7 +380,7 @@ struct Labels: View {
             #if os(macOS)
             var topBand: CGFloat = 80          // title bar + readout chips
             #else
-            var topBand: CGFloat = 52 + SafeArea.insets.top          // readout chips, below the island
+            var topBand: CGFloat = 52 + topInset          // readout chips, below the island
             #endif
             if model.timeBarOpen { topBand += 48 }
 
@@ -753,20 +770,5 @@ struct Readout: View {
         let f = DateFormatter()
         f.dateFormat = !model.timeTraveling ? "HH:mm" : compact ? "MMM d HH:mm" : "yyyy-MM-dd HH:mm zzz"
         return (model.fixedDate != nil && model.timeOffset == 0 && !compact ? "Frozen " : "") + f.string(from: d)
-    }
-}
-
-/// The window's safe-area insets, read from UIKit: the sky view ignores the safe
-/// area (it's edge to edge), which zeroes SwiftUI's own, but its controls mustn't.
-enum SafeArea {
-    static var insets: EdgeInsets {
-        #if os(iOS)
-        let window = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-            .flatMap(\.windows).first { $0.isKeyWindow }
-        guard let i = window?.safeAreaInsets else { return EdgeInsets() }
-        return EdgeInsets(top: i.top, leading: i.left, bottom: i.bottom, trailing: i.right)
-        #else
-        return EdgeInsets()
-        #endif
     }
 }

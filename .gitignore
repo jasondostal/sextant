@@ -9,3 +9,4 @@ tools/asc/.venv/
 __pycache__/
 docs/oracle/
 .claude/
+DerivedData-*/
